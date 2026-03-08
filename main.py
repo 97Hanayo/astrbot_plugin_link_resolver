@@ -661,7 +661,8 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         if self._has_json_component(event):
             return
         self._register_parse_task("xhs", event)
-        await XiaohongshuMixin.handle_xhs(self, event)
+        async for result in XiaohongshuMixin.handle_xhs(self, event):
+            yield result
 
     @filter.regex(r".*")
     async def handle_json_card(self, event: AstrMessageEvent):
@@ -732,7 +733,8 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
             self._register_parse_task("json-xhs", event)
             event.should_call_llm(True)
             try:
-                await self._process_xhs(event, xhs_links[0], is_from_card=True)
+                async for result in self._process_xhs(event, xhs_links[0], is_from_card=True):
+                    yield result
                 return
             except asyncio.CancelledError:
                 logger.info("♻️ JSON卡片解析任务已中断")

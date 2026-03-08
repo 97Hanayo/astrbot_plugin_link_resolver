@@ -715,12 +715,12 @@ class XiaohongshuMixin:
             sender_uin = self._get_merge_sender_uin(event)
             for component in media_components:
                 nodes.nodes.append(Node(uin=sender_uin, content=[component]))
-            await event.send(MessageChain([nodes]))
+            yield event.chain_result([nodes])
         else:
             if is_image_post:
                 # 图文笔记逐条发送（触发解合阈值时）
                 for i, component in enumerate(media_components):
-                    await event.send(MessageChain([component]))
+                    yield event.chain_result([component])
                     if i < len(media_components) - 1:
                         await asyncio.sleep(2.0)
             else:
@@ -728,7 +728,7 @@ class XiaohongshuMixin:
                 # 找到视频组件（第一个非卡片的组件）
                 for component in media_components:
                     if isinstance(component, Video):
-                        await event.send(MessageChain([component]))
+                        yield event.chain_result([component])
                         break
 
         timing["send"] = time.perf_counter() - send_start
