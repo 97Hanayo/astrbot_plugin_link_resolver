@@ -31,7 +31,7 @@ TASK_NAME_PREFIX = "link-resolver-parse"
 # endregion
 
 # region LinkResolver 类
-@register("astrbot_plugin_link_resolver", "acacia", "解析 & 下载 Bilibili/抖音/小红书", "1.0.8")
+@register("astrbot_plugin_link_resolver", "acacia", "解析 & 下载 Bilibili/抖音/小红书", "1.0.9")
 class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
     def __init__(self, context: Context, config: AstrBotConfig | dict | None = None):
         super().__init__(context)
@@ -69,7 +69,7 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         self.xhs_enabled = "小红书" in enable_platforms
         
         # B站配置
-        self.quality_label = str(self._get_config_value("bili_settings.video_quality", "720P"))
+        self.quality_label = str(self._get_config_value("bili_settings.video_quality", "1080P高帧率"))
         self.codecs_label = str(self._get_config_value("bili_settings.video_codecs", "AVC"))
         self.allow_hdr = bool(self._get_config_value("bili_settings.allow_hdr", False))
         self.allow_dolby = bool(self._get_config_value("bili_settings.allow_dolby", False))
@@ -100,8 +100,8 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
                 logger.warning("⚠️ 写入 B站 Cookie 文件失败: %s", str(exc))
         
         # 抖音配置
-        self.douyin_max_media = max(1, int(self._get_config_value("douyin_settings.max_media", 9)))
-        self.douyin_merge_send = bool(self._get_config_value("douyin_settings.merge_send", True))
+        self.douyin_max_media = max(1, int(self._get_config_value("douyin_settings.max_media", 99)))
+        self.douyin_merge_send = bool(self._get_config_value("douyin_settings.merge_send", False))
         
         # 小红书配置
         self.xhs_max_media = max(1, int(self._get_config_value("xhs_settings.max_media", 99)))
