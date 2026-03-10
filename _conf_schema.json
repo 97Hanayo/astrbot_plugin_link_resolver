@@ -122,14 +122,22 @@
             "prefer_ci_png": {
                 "description": "小红书优先CI-PNG转码",
                 "type": "bool",
-                "hint": "开启后优先通过腾讯云CI将图片转码为PNG格式(体积约为原图2倍 - 只是 JPEG 转码为 PNG, 不会有画质的提升, 并且部分图片可能转码失败回退到CDN原图), 别开。",
-                "default": false
+                "hint": "开启后优先通过腾讯云CI将图片转码为PNG格式(体积约为原图2倍 - 只是 JPEG 转码为 PNG, 不会有画质的提升, 并且部分图片可能转码失败回退到CDN原图)。",
+                "default": true
             },
             "auto_unmerge_threshold_mb": {
                 "description": "小红书自动解合阈值(MB)",
                 "type": "int",
                 "hint": "当下载的图片总大小超过此值时，改为逐条发送，防止客户端崩溃。设为0禁用。",
                 "default": 50
+            },
+            "qq_image_size_limit_mb": {
+                "description": "QQ图片转文件阈值(MB)",
+                "type": "int",
+                "hint": "当单张图片超过此大小时，改为文件组件发送以绕过 QQ 图片体积限制。设为0禁用转换。",
+                "default": 30,
+                "min": 0,
+                "max": 200
             },
             "concurrent_download": {
                 "description": "小红书图片并发下载",

@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import aiohttp
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.message_components import Image, Node, Nodes, Video
+from astrbot.api.message_components import File, Image, Node, Nodes, Video
 
 from ..common import (
     SizeLimitExceeded,
@@ -685,20 +685,40 @@ class XiaohongshuMixin:
 
         # region 发送阶段
         send_start = time.perf_counter()
-        
+
+        # 转换超过QQ限制的图片为文件组件
+        def _convert_to_file_if_needed(component):
+            """如果图片超过QQ限制，转为 File 组件上传"""
+            if isinstance(component, Image) and hasattr(component, 'path') and component.path:
+                try:
+                    qq_image_size_limit_mb = getattr(self, "xhs_qq_image_size_limit_mb", 30)
+                    if qq_image_size_limit_mb <= 0:
+                        return component
+                    file_size = Path(component.path).stat().st_size
+                    if file_size > qq_image_size_limit_mb * 1024 * 1024:
+                        file_name = Path(component.path).name
+                        logger.info("XHS 图片 %.1fMB 超过 %dMB QQ限制，转为文件上传: %s",
+                                     file_size / 1024 / 1024, qq_image_size_limit_mb, file_name)
+                        return File(file=component.path, name=file_name)
+                except Exception:
+                    pass
+            return component
+
+        media_components = [_convert_to_file_if_needed(c) for c in media_components]
+
         # 计算总大小
         total_size_bytes = await asyncio.to_thread(
             lambda: sum(p.stat().st_size for p in media_paths if p.exists())
         )
         total_size_mb = total_size_bytes / (1024 * 1024)
-        
+
         # 判断是否触发解合阈值
         threshold = getattr(self, 'xhs_auto_unmerge_threshold_mb', 20)
         force_unmerge = False
         if threshold > 0 and total_size_mb > threshold:
             logger.info("XHS 媒体总大小 (%.2fMB) 超过阈值 (%dMB)，强制逐条发送", total_size_mb, threshold)
             force_unmerge = True
-        
+
         # 判断是否为图文笔记（有图片路径）
         is_image_post = bool(image_paths)
         # 图文笔记始终合并转发；视频笔记根据配置决定

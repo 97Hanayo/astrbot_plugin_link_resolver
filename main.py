@@ -109,6 +109,9 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         self.xhs_download_original = bool(self._get_config_value("xhs_settings.download_original", True))
         self.xhs_prefer_ci_png = bool(self._get_config_value("xhs_settings.prefer_ci_png", False))
         self.xhs_auto_unmerge_threshold_mb = int(self._get_config_value("xhs_settings.auto_unmerge_threshold_mb", 50))
+        self.xhs_qq_image_size_limit_mb = max(
+            0, int(self._get_config_value("xhs_settings.qq_image_size_limit_mb", 30))
+        )
         self.xhs_concurrent_download = bool(self._get_config_value("xhs_settings.concurrent_download", True))
         
         # 通用配置
@@ -137,14 +140,20 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
             if self.bili_max_duration_seconds > 0
             else "无限制"
         )
+        xhs_image_limit_label = (
+            f"{self.xhs_qq_image_size_limit_mb}MB"
+            if self.xhs_qq_image_size_limit_mb > 0
+            else "关闭"
+        )
         logger.info(
-            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,时长<=%s), 抖音(合并=%s), 小红书(原图=%s), 重试=%d",
+            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,时长<=%s), 抖音(合并=%s), 小红书(原图=%s,大图转文件=%s), 重试=%d",
             "/".join(enabled_list) if enabled_list else "无",
             self.video_quality.name,
             "开" if self.bili_merge_send else "关",
             duration_label,
             "开" if self.douyin_merge_send else "关",
             "开" if self.xhs_download_original else "关",
+            xhs_image_limit_label,
             self.retry_count,
         )
     # endregion
