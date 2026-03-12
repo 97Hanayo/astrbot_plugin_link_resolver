@@ -6,12 +6,14 @@
         "options": [
             "B站",
             "抖音",
-            "小红书"
+            "小红书",
+            "微博"
         ],
         "default": [
             "B站",
             "抖音",
-            "小红书"
+            "小红书",
+            "微博"
         ]
     },
     "bili_settings": {
@@ -92,6 +94,38 @@
                 "type": "bool",
                 "hint": "仅对视频生效。开启时发送卡片+视频的合并转发；关闭时只发送单独视频。图文笔记始终使用合并转发（卡片+图片）。",
                 "default": false
+            }
+        }
+    },
+    "weibo_settings": {
+        "description": "微博设置",
+        "type": "object",
+        "items": {
+            "max_media": {
+                "description": "微博最多发送媒体数",
+                "type": "int",
+                "hint": "微博图文最多发送的图片数量。",
+                "default": 99,
+                "min": 1,
+                "max": 99
+            },
+            "merge_send": {
+                "description": "微博视频合并发送",
+                "type": "bool",
+                "hint": "仅对视频微博生效。开启时发送文本摘要+视频的合并转发；关闭时发送文本摘要+单独视频。图文微博始终使用合并转发。",
+                "default": false
+            },
+            "download_original": {
+                "description": "下载微博原图",
+                "type": "bool",
+                "hint": "开启后优先下载微博原图/大图；关闭则优先下载普通大图，但仍会自动回退到可用图片。",
+                "default": true
+            },
+            "cookies": {
+                "description": "微博Cookies",
+                "type": "string",
+                "hint": "可选。粘贴浏览器导出的 Cookie 字符串（k=v;...）。留空时插件会先尝试生成访客 Cookie 解析公开微博。",
+                "default": ""
             }
         }
     },

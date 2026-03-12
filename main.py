@@ -9,15 +9,18 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
+
+import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
-import astrbot.api.message_components as Comp
 from astrbot.api.star import Context, Star, register
 
 from .core.bilibili import BILI_MESSAGE_PATTERN, BilibiliMixin
 from .core.common import SizeLimitExceeded, get_bili_cookies_file
 from .core.douyin import DOUYIN_MESSAGE_PATTERN, DouyinExtractor
 from .core.douyin.handler import DouyinMixin
+from .core.weibo import WEIBO_MESSAGE_PATTERN, WeiboExtractor
+from .core.weibo.handler import WeiboMixin
 from .core.xiaohongshu import (
     XHS_MESSAGE_PATTERN,
     XiaohongshuCardRenderer,
@@ -25,6 +28,7 @@ from .core.xiaohongshu import (
     find_default_font,
 )
 from .core.xiaohongshu.handler import XiaohongshuMixin
+
 # endregion
 
 # region 运行时常量
@@ -36,10 +40,10 @@ TASK_NAME_PREFIX = "link-resolver-parse"
 @register(
     "astrbot_plugin_link_resolver",
     "acacia",
-    "解析 & 下载 Bilibili/抖音/小红书",
-    "1.0.9",
+    "解析 & 下载 Bilibili/抖音/小红书/微博",
+    "1.0.10",
 )
-class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
+class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, Star):
     def __init__(self, context: Context, config: AstrBotConfig | dict | None = None):
         super().__init__(context)
         self.context = context
@@ -49,6 +53,7 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         self._cancel_previous_parse_tasks()
         self._active_parse_tasks: set[asyncio.Task] = set()
         self.douyin_extractor = DouyinExtractor()
+        self.weibo_extractor = WeiboExtractor()
         self.xhs_extractor = XiaohongshuExtractor()
         self.xhs_renderer = XiaohongshuCardRenderer(find_default_font())
         self._refresh_config()
@@ -69,13 +74,14 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
     def _refresh_config(self) -> None:
         # 平台启用列表
         enable_platforms = self._get_config_value(
-            "enable_platforms", ["B站", "抖音", "小红书"]
+            "enable_platforms", ["B站", "抖音", "小红书", "微博"]
         )
         if not isinstance(enable_platforms, list):
-            enable_platforms = ["B站", "抖音", "小红书"]
+            enable_platforms = ["B站", "抖音", "小红书", "微博"]
         self.bili_enabled = "B站" in enable_platforms
         self.douyin_enabled = "抖音" in enable_platforms
         self.xhs_enabled = "小红书" in enable_platforms
+        self.weibo_enabled = "微博" in enable_platforms
 
         # B站配置
         self.quality_label = str(
@@ -131,6 +137,23 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         self.douyin_merge_send = bool(
             self._get_config_value("douyin_settings.merge_send", False)
         )
+
+        # 微博配置
+        self.weibo_max_media = max(
+            1, int(self._get_config_value("weibo_settings.max_media", 99))
+        )
+        self.weibo_merge_send = bool(
+            self._get_config_value("weibo_settings.merge_send", False)
+        )
+        self.weibo_download_original = bool(
+            self._get_config_value("weibo_settings.download_original", True)
+        )
+        weibo_cookies_str = str(
+            self._get_config_value("weibo_settings.cookies", "")
+        ).strip()
+        self.weibo_extractor.set_cookie(weibo_cookies_str)
+        self.weibo_extractor.download_original = self.weibo_download_original
+        self.weibo_cookie_enabled = self.weibo_extractor.has_user_cookie()
 
         # 小红书配置
         self.xhs_max_media = max(
@@ -215,7 +238,9 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         )
 
         # 构建启用平台列表
-        enabled_list = [p for p in ["B站", "抖音", "小红书"] if p in enable_platforms]
+        enabled_list = [
+            p for p in ["B站", "抖音", "小红书", "微博"] if p in enable_platforms
+        ]
         duration_label = (
             f"{self.bili_max_duration_seconds}s"
             if self.bili_max_duration_seconds > 0
@@ -227,7 +252,7 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
             else "关闭"
         )
         logger.info(
-            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,时长<=%s), 抖音(合并=%s), 小红书(原图=%s,大图转文件=%s), 重试=%d",
+            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,时长<=%s), 抖音(合并=%s), 小红书(原图=%s,大图转文件=%s), 微博(原图=%s,合并=%s,Cookie=%s), 重试=%d",
             "/".join(enabled_list) if enabled_list else "无",
             self.video_quality.name,
             "开" if self.bili_merge_send else "关",
@@ -235,6 +260,9 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
             "开" if self.douyin_merge_send else "关",
             "开" if self.xhs_download_original else "关",
             xhs_image_limit_label,
+            "开" if self.weibo_download_original else "关",
+            "开" if self.weibo_merge_send else "关",
+            "开" if self.weibo_cookie_enabled else "关",
             self.retry_count,
         )
         logger.info(
@@ -304,9 +332,11 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
                     token in qualname
                     for token in (
                         "handle_xhs",
+                        "handle_weibo",
                         "handle_douyin",
                         "handle_bili_video",
                         "_process_xhs",
+                        "_process_weibo",
                         "_process_douyin",
                         "_process_bili_video",
                     )
@@ -856,6 +886,15 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         async for result in XiaohongshuMixin.handle_xhs(self, event):
             yield result
 
+    @filter.regex(WEIBO_MESSAGE_PATTERN, priority=10)
+    async def handle_weibo(self, event: AstrMessageEvent):
+        if self._has_json_component(event):
+            return
+        if not self._is_group_allowed(event):
+            return
+        self._register_parse_task("weibo", event)
+        await WeiboMixin.handle_weibo(self, event)
+
     @filter.regex(r".*")
     async def handle_json_card(self, event: AstrMessageEvent):
         if self._is_self_message(event):
@@ -909,6 +948,9 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         xhs_links = [
             link for link in unique_links if re.search(XHS_MESSAGE_PATTERN, link)
         ]
+        weibo_links = [
+            link for link in unique_links if re.search(WEIBO_MESSAGE_PATTERN, link)
+        ]
 
         if bili_links and self.bili_enabled:
             self._register_parse_task("json-bili", event)
@@ -941,6 +983,16 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
                     event, xhs_links[0], is_from_card=True
                 ):
                     yield result
+                return
+            except asyncio.CancelledError:
+                logger.info("♻️ JSON卡片解析任务已中断")
+                return
+
+        if weibo_links and self.weibo_enabled:
+            self._register_parse_task("json-weibo", event)
+            event.should_call_llm(True)
+            try:
+                await self._process_weibo(event, weibo_links[0], is_from_card=True)
                 return
             except asyncio.CancelledError:
                 logger.info("♻️ JSON卡片解析任务已中断")

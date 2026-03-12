@@ -3,7 +3,7 @@
 [![AstrBot Plugin](https://img.shields.io/badge/AstrBot-Plugin-blue?style=flat-square)](https://github.com/Soulter/AstrBot)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-green?style=flat-square)](LICENSE)
 
-支持监听群内 **B站** / **抖音** / **小红书** 链接，自动解析并下载发送视频或图集内容。无需任何命令，发链接即可触发。
+支持监听群内 **B站** / **抖音** / **小红书** / **微博** 链接，自动解析并下载发送视频或图集内容。无需任何命令，发链接即可触发。
 
 ---
 
@@ -13,19 +13,20 @@
 - 🎵 **抖音解析**：支持视频和图文笔记，自动下载并发送
 - 📕 **小红书原图解析**：支持视频和图文笔记，可下载原图
 - 🚦 **群过滤(黑/白名单)**：按群号控制哪些群启用解析，私聊不受影响
+- 🐦 **微博解析**：支持单条微博正文、图片、视频，默认原图优先
 
 ---
 
 ## ⚙️ 配置项
 在 AstrBot 管理面板的插件配置中可调整以下选项：
 
-`v1.0.9` 起配置面板改为按平台分组折叠；如果你是从旧版升级，建议重新检查一次配置值。
+`v1.0.10` 起支持微博解析；`v1.0.9` 起配置面板改为按平台分组折叠。如果你是从旧版升级，建议重新检查一次配置值。
 
 ### 基础设置
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `enable_platforms` | 勾选要启用解析的平台 | B站, 抖音, 小红书 |
+| `enable_platforms` | 勾选要启用解析的平台 | B站, 抖音, 小红书, 微博 |
 | `general_settings.retry_count` | 解析失败重试次数（所有平台共用） | 3 |
 | `general_settings.max_video_size_mb` | 最大视频大小限制 (MB)，超过则跳过下载或自动降画质 | 200 |
 | `general_settings.reaction_emoji_enabled` | 识别链接后是否发表情回应 | ✅ 开启 |
@@ -78,6 +79,15 @@
 | `douyin_settings.max_media` | 图集最多发送媒体数 | 99 |
 | `douyin_settings.merge_send` | 视频使用合并转发 | ❌ 关闭 |
 
+### 微博设置
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `weibo_settings.max_media` | 图文微博最多发送图片数 | 99 |
+| `weibo_settings.merge_send` | 视频微博使用合并转发 | ❌ 关闭 |
+| `weibo_settings.download_original` | 原图优先下载并自动回退 | ✅ 开启 |
+| `weibo_settings.cookies` | 微博 Cookie 文本 | 空 |
+
 ### 小红书设置
 
 | 配置项 | 说明 | 默认值 |
@@ -95,6 +105,10 @@
 
 ## 使用方法
 直接在群内发送包含以下链接的消息即可自动解析
+- `weibo.com/<uid>/<mblogid>`
+- `m.weibo.cn/detail/<mblogid>`
+- `m.weibo.cn/status/<mblogid>`
+- `weibo.cn/<mblogid>`
 
 ---
 
@@ -109,6 +123,7 @@ astrbot_plugin_link_resolver/
 ├── core/                # 核心解析模块
 │   ├── bilibili/        # B站解析
 │   ├── douyin/          # 抖音解析
+│   ├── weibo/           # 微博解析
 │   ├── xiaohongshu/     # 小红书解析
 │   └── common/          # 公共工具
 ├── cache/               # 媒体缓存目录
@@ -136,6 +151,18 @@ astrbot_plugin_link_resolver/
 
 将 Cookie 内容保存到 `cookies/bili_cookies.txt`（插件会自动创建目录）
 
+### 微博 Cookie（可选）
+
+微博默认会先尝试生成访客 Cookie 解析公开微博；如果遇到受限内容、返回访客校验页面或成功率不稳定，可以在管理面板的 `weibo_settings.cookies` 粘贴浏览器 Cookie 字符串。
+
+建议至少包含 `SUB` 等微博登录态字段，格式示例：
+
+```text
+SUB=...; SUBP=...; SSOLoginState=...; ALF=...
+```
+- 微博分享链路风控较重，公开微博也可能出现临时访客校验。
+
+
 
 ---
 
@@ -150,6 +177,8 @@ astrbot_plugin_link_resolver/
 
 - [astrbot_plugin_parser](https://github.com/Zhalslar/astrbot_plugin_parser)
 - [XHS-Downloader](https://github.com/JoeanAmier/XHS-Downloader) — 小红书图片下载参考实现
+- [Johnserf-Seed/f2](https://github.com/Johnserf-Seed/f2) — 微博详情接口与访客 Cookie 参考实现
+- [dataabc/weibo-crawler](https://github.com/dataabc/weibo-crawler) — 微博原图/视频字段与公开抓取思路参考
 
 ---
 

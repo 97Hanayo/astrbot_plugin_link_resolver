@@ -105,6 +105,18 @@ def get_xhs_image_path() -> Path:
 
 def get_xhs_card_path() -> Path:
     return _ensure_dir(get_xhs_cache() / "cards")
-# endregion
-# endregion
 
+
+# Weibo 路径
+def get_weibo_cache() -> Path:
+    return _ensure_dir(get_cache_path() / "weibo")
+
+
+def get_weibo_video_path() -> Path:
+    return _ensure_dir(get_weibo_cache() / "videos")
+
+
+def get_weibo_image_path() -> Path:
+    return _ensure_dir(get_weibo_cache() / "images")
+# endregion
+# endregion
