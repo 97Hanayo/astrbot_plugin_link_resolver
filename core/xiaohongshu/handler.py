@@ -926,7 +926,10 @@ class XiaohongshuMixin:
         if not links:
             return
         try:
-            await self._process_xhs(event, links[0], is_from_card=False)
+            async for result in self._process_xhs(
+                event, links[0], is_from_card=False
+            ):
+                yield result
         except asyncio.CancelledError:
             logger.info("♻️ 小红书解析任务已中断")
             return
