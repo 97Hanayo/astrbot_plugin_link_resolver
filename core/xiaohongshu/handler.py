@@ -44,7 +44,9 @@ class XiaohongshuMixin:
         return base_dir / f"{self._hash_url(url)}_{request_id}{suffix}"
 
     def _build_xhs_card_path(self, source_url: str, request_id: str) -> Path:
-        return get_xhs_card_path() / f"{self._hash_url(source_url)}_{request_id}_card.png"
+        return (
+            get_xhs_card_path() / f"{self._hash_url(source_url)}_{request_id}_card.png"
+        )
 
     @staticmethod
     def _force_https(url: str) -> str:
@@ -55,6 +57,7 @@ class XiaohongshuMixin:
         if parsed.scheme in ("", "http"):
             return parsed._replace(scheme="https").geturl()
         return url
+
     # endregion
 
     # region 下载与渲染
@@ -89,8 +92,12 @@ class XiaohongshuMixin:
         )
         return any(p in text for p in retryable_patterns)
 
-    async def _download_xhs_video(self, url: str, request_id: str, referer: str | None = None) -> Path:
-        max_bytes = self.max_video_size_mb * 1024 * 1024 if self.max_video_size_mb > 0 else None
+    async def _download_xhs_video(
+        self, url: str, request_id: str, referer: str | None = None
+    ) -> Path:
+        max_bytes = (
+            self.max_video_size_mb * 1024 * 1024 if self.max_video_size_mb > 0 else None
+        )
         size_mb = await self._estimate_total_size_mb(
             url, None, headers=self._xhs_download_headers(referer)
         )
@@ -116,7 +123,7 @@ class XiaohongshuMixin:
         url: str,
         request_id: str,
         file_id: str | None = None,
-        referer: str | None = None
+        referer: str | None = None,
     ) -> Path:
         """下载图片 - 两级回退策略
 
@@ -125,17 +132,19 @@ class XiaohongshuMixin:
         2. 如果都失败：回退到多 CDN 兜底策略
         """
         start_time = time.perf_counter()
-        
+
         output_path = self._build_xhs_path(url, is_video=False, request_id=request_id)
 
         # 提取 image token (参考 XHS-Downloader)
         token = self._extract_image_token(url)
-        logger.debug("XHS 图片下载开始: url=%s, file_id=%s, token=%s", url[:80], file_id, token)
-        
+        logger.debug(
+            "XHS 图片下载开始: url=%s, file_id=%s, token=%s", url[:80], file_id, token
+        )
+
         # region 原图下载尝试
-        if getattr(self, 'xhs_download_original', True) and token:
+        if getattr(self, "xhs_download_original", True) and token:
             original_start = time.perf_counter()
-            
+
             # 构建原图 URL 候选列表
             original_candidates = []
 
@@ -163,7 +172,7 @@ class XiaohongshuMixin:
                 },
             ]
 
-            if getattr(self, 'xhs_prefer_ci_png', False):
+            if getattr(self, "xhs_prefer_ci_png", False):
                 original_candidates = ci_candidates + cdn_candidates
             else:
                 original_candidates = cdn_candidates + ci_candidates
@@ -173,7 +182,7 @@ class XiaohongshuMixin:
                 cand_url = cand["url"]
                 desc = cand["desc"]
                 format_name = cand["format"]
-                
+
                 for attempt in range(retry_count + 1):
                     attempt_start = time.perf_counter()
                     try:
@@ -182,28 +191,34 @@ class XiaohongshuMixin:
                             "User-Agent": _XHS_DOWNLOAD_UA,
                             "Referer": "https://www.xiaohongshu.com/",
                         }
-                        
+
                         async with aiohttp.ClientSession(
-                            headers=headers,
-                            timeout=timeout
+                            headers=headers, timeout=timeout
                         ) as session:
                             async with session.get(cand_url) as resp:
                                 attempt_elapsed = time.perf_counter() - attempt_start
-                                
+
                                 if resp.status == 200:
                                     # 先写入临时文件，避免一次性读取导致 payload 不完整
                                     temp_output = output_path.with_suffix(".tmp")
-                                    temp_path = temp_output.with_suffix(temp_output.suffix + ".part")
+                                    temp_path = temp_output.with_suffix(
+                                        temp_output.suffix + ".part"
+                                    )
                                     content_len = 0
                                     f = None
                                     try:
+
                                         def _open_temp():
-                                            temp_path.parent.mkdir(parents=True, exist_ok=True)
+                                            temp_path.parent.mkdir(
+                                                parents=True, exist_ok=True
+                                            )
                                             return open(temp_path, "wb")
 
                                         f = await asyncio.to_thread(_open_temp)
                                         try:
-                                            async for chunk in resp.content.iter_chunked(256 * 1024):
+                                            async for (
+                                                chunk
+                                            ) in resp.content.iter_chunked(256 * 1024):
                                                 if not chunk:
                                                     continue
                                                 content_len += len(chunk)
@@ -213,39 +228,69 @@ class XiaohongshuMixin:
                                                 await asyncio.to_thread(f.close)
 
                                         # 验证文件大小（至少 10KB 才认为是有效图片）
-                                        if content_len >= 10 * 1024 and temp_path.exists():
+                                        if (
+                                            content_len >= 10 * 1024
+                                            and temp_path.exists()
+                                        ):
                                             # 确定输出文件后缀
                                             if format_name:
                                                 actual_suffix = f".{format_name}"
                                             else:
+
                                                 def _read_head():
                                                     with open(temp_path, "rb") as rf:
                                                         return rf.read(32)
-                                                head = await asyncio.to_thread(_read_head)
-                                                actual_suffix = self._detect_image_suffix(head, resp.headers.get("Content-Type"))
-                                            
-                                            final_output = output_path.with_suffix(actual_suffix)
-                                            final_part = final_output.with_suffix(final_output.suffix + ".part")
+
+                                                head = await asyncio.to_thread(
+                                                    _read_head
+                                                )
+                                                actual_suffix = (
+                                                    self._detect_image_suffix(
+                                                        head,
+                                                        resp.headers.get(
+                                                            "Content-Type"
+                                                        ),
+                                                    )
+                                                )
+
+                                            final_output = output_path.with_suffix(
+                                                actual_suffix
+                                            )
+                                            final_part = final_output.with_suffix(
+                                                final_output.suffix + ".part"
+                                            )
+
                                             def _move():
                                                 if final_part.exists():
                                                     final_part.unlink()
                                                 temp_path.replace(final_part)
                                                 final_part.replace(final_output)
+
                                             await asyncio.to_thread(_move)
-                                            
-                                            total_elapsed = time.perf_counter() - start_time
+
+                                            total_elapsed = (
+                                                time.perf_counter() - start_time
+                                            )
                                             logger.debug(
                                                 "XHS 原图下载成功 (%s): size=%.1fMB, 请求耗时=%.2fs, 总耗时=%.2fs",
-                                                desc, content_len / 1024 / 1024, attempt_elapsed, total_elapsed
+                                                desc,
+                                                content_len / 1024 / 1024,
+                                                attempt_elapsed,
+                                                total_elapsed,
                                             )
                                             return final_output
                                         else:
                                             logger.debug(
                                                 "XHS 原图响应过小 (%s): size=%d bytes, 耗时=%.2fs",
-                                                desc, content_len, attempt_elapsed
+                                                desc,
+                                                content_len,
+                                                attempt_elapsed,
                                             )
                                     finally:
-                                        if temp_path.exists() and content_len < 10 * 1024:
+                                        if (
+                                            temp_path.exists()
+                                            and content_len < 10 * 1024
+                                        ):
                                             try:
                                                 temp_path.unlink()
                                             except Exception:
@@ -253,7 +298,9 @@ class XiaohongshuMixin:
                                 else:
                                     logger.debug(
                                         "XHS 原图请求失败 (%s): HTTP %d, 耗时=%.2fs",
-                                        desc, resp.status, attempt_elapsed
+                                        desc,
+                                        resp.status,
+                                        attempt_elapsed,
                                     )
                     except asyncio.CancelledError:
                         raise
@@ -261,30 +308,37 @@ class XiaohongshuMixin:
                         attempt_elapsed = time.perf_counter() - attempt_start
                         logger.debug(
                             "XHS 原图下载异常 (%s): %s, 耗时=%.2fs",
-                            desc, str(e)[:50], attempt_elapsed
+                            desc,
+                            str(e)[:50],
+                            attempt_elapsed,
                         )
 
                     if attempt < retry_count:
-                        wait_time = 0.5 * (2 ** attempt)
+                        wait_time = 0.5 * (2**attempt)
                         await asyncio.sleep(wait_time)
-            
+
             original_elapsed = time.perf_counter() - original_start
-            logger.debug("XHS 原图下载全部失败，回退到普通策略，原图尝试耗时=%.2fs", original_elapsed)
+            logger.debug(
+                "XHS 原图下载全部失败，回退到普通策略，原图尝试耗时=%.2fs",
+                original_elapsed,
+            )
         # endregion
-        
+
         # region CDN 兜底策略
         fallback_start = time.perf_counter()
-        
+
         # 基础 Headers
         base_headers = {
             "User-Agent": _XHS_DOWNLOAD_UA,
         }
-        
+
         # 构建阶梯候选列表
         candidates = []
-        
+
         # 1. 原始 URL (带签名)
-        raw_url = url.replace("http://", "https://", 1) if url.startswith("http://") else url
+        raw_url = (
+            url.replace("http://", "https://", 1) if url.startswith("http://") else url
+        )
         candidates.append({"url": raw_url, "desc": "Raw"})
 
         effective_id = file_id or token
@@ -299,20 +353,25 @@ class XiaohongshuMixin:
             for domain in domains:
                 for path_prefix in ["", "spectrum/"]:
                     path = f"{path_prefix}{effective_id}"
-                    candidates.append({"url": f"https://{domain}/{path}", "desc": f"CDN-{domain.split('.')[0]}"})
+                    candidates.append(
+                        {
+                            "url": f"https://{domain}/{path}",
+                            "desc": f"CDN-{domain.split('.')[0]}",
+                        }
+                    )
 
         errors = []
         retry_count = max(0, int(getattr(self, "retry_count", 3)))
         for cand in candidates:
             cand_url = cand["url"]
             desc = cand["desc"]
-            
+
             # 两种 header 变体
             header_variants = [
                 {**base_headers, "Referer": "https://www.xiaohongshu.com/"},
                 base_headers.copy(),
             ]
-            
+
             for hv in header_variants:
                 for attempt in range(retry_count + 1):
                     attempt_start = time.perf_counter()
@@ -320,21 +379,28 @@ class XiaohongshuMixin:
                         # 超长超时
                         timeout = aiohttp.ClientTimeout(total=300, connect=30)
                         async with aiohttp.ClientSession(
-                            headers=hv,
-                            timeout=timeout
+                            headers=hv, timeout=timeout
                         ) as session:
                             async with session.get(cand_url) as resp:
                                 if resp.status == 200:
-                                    temp_path = output_path.with_suffix(output_path.suffix + ".part")
+                                    temp_path = output_path.with_suffix(
+                                        output_path.suffix + ".part"
+                                    )
                                     content_len = 0
                                     f = None
                                     try:
+
                                         def _open_part():
-                                            temp_path.parent.mkdir(parents=True, exist_ok=True)
+                                            temp_path.parent.mkdir(
+                                                parents=True, exist_ok=True
+                                            )
                                             return open(temp_path, "wb")
+
                                         f = await asyncio.to_thread(_open_part)
                                         try:
-                                            async for chunk in resp.content.iter_chunked(256 * 1024):
+                                            async for (
+                                                chunk
+                                            ) in resp.content.iter_chunked(256 * 1024):
                                                 if not chunk:
                                                     continue
                                                 content_len += len(chunk)
@@ -344,32 +410,51 @@ class XiaohongshuMixin:
                                                 await asyncio.to_thread(f.close)
 
                                         if content_len >= 1024 and temp_path.exists():
+
                                             def _move():
                                                 temp_path.replace(output_path)
+
                                             await asyncio.to_thread(_move)
 
-                                            attempt_elapsed = time.perf_counter() - attempt_start
-                                            total_elapsed = time.perf_counter() - start_time
+                                            attempt_elapsed = (
+                                                time.perf_counter() - attempt_start
+                                            )
+                                            total_elapsed = (
+                                                time.perf_counter() - start_time
+                                            )
                                             logger.debug(
                                                 "📥 XHS CDN 图片下载成功 (%s): size=%.1fKB, 请求耗时=%.2fs, 总耗时=%.2fs",
-                                                desc, content_len / 1024, attempt_elapsed, total_elapsed
+                                                desc,
+                                                content_len / 1024,
+                                                attempt_elapsed,
+                                                total_elapsed,
                                             )
                                             return output_path
                                         else:
-                                            logger.debug("XHS CDN 图片过小，忽略 (%s): size=%d bytes", desc, content_len)
-                                            errors.append(f"{desc}: 文件过小 ({content_len} bytes)")
+                                            logger.debug(
+                                                "XHS CDN 图片过小，忽略 (%s): size=%d bytes",
+                                                desc,
+                                                content_len,
+                                            )
+                                            errors.append(
+                                                f"{desc}: 文件过小 ({content_len} bytes)"
+                                            )
                                             if temp_path.exists():
-                                                await asyncio.to_thread(temp_path.unlink)
+                                                await asyncio.to_thread(
+                                                    temp_path.unlink
+                                                )
                                     except asyncio.CancelledError:
                                         raise
                                     except Exception:
                                         if temp_path.exists():
                                             try:
-                                                await asyncio.to_thread(temp_path.unlink)
+                                                await asyncio.to_thread(
+                                                    temp_path.unlink
+                                                )
                                             except Exception:
                                                 pass
                                         raise
-                                
+
                                 errors.append(f"{desc}: HTTP {resp.status}")
                     except asyncio.CancelledError:
                         raise
@@ -377,16 +462,20 @@ class XiaohongshuMixin:
                         errors.append(f"{desc}: {str(e)[:20]}")
 
                     if attempt < retry_count:
-                        wait_time = 0.5 * (2 ** attempt)
+                        wait_time = 0.5 * (2**attempt)
                         await asyncio.sleep(wait_time)
         # endregion
-        
+
         # 全部失败
         total_elapsed = time.perf_counter() - start_time
         error_summary = " | ".join(errors[:5])  # 只取前5个错误
-        logger.error("❌ XHS 图片下载全线失败: 总耗时=%.2fs, 错误=%s", total_elapsed, error_summary)
+        logger.error(
+            "❌ XHS 图片下载全线失败: 总耗时=%.2fs, 错误=%s",
+            total_elapsed,
+            error_summary,
+        )
         raise RuntimeError(f"图片下载失败: {error_summary}")
-    
+
     @staticmethod
     def _extract_image_token(url: str) -> str | None:
         """从 URL 中提取 image token（参考 XHS-Downloader）"""
@@ -407,24 +496,24 @@ class XiaohongshuMixin:
         except Exception:
             pass
         return None
-    
+
     @staticmethod
     def _detect_image_suffix(content: bytes, content_type: str | None) -> str:
         """从文件签名或 Content-Type 检测图片格式"""
         # 文件签名检测（魔数）
-        if content[:8] == b'\x89PNG\r\n\x1a\n':
+        if content[:8] == b"\x89PNG\r\n\x1a\n":
             return ".png"
-        if content[:3] == b'\xff\xd8\xff':
+        if content[:3] == b"\xff\xd8\xff":
             return ".jpeg"
-        if content[:4] == b'RIFF' and content[8:12] == b'WEBP':
+        if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
             return ".webp"
-        if content[:4] == b'GIF8':
+        if content[:4] == b"GIF8":
             return ".gif"
-        if content[4:12] in (b'ftypavif', b'ftypavis'):
+        if content[4:12] in (b"ftypavif", b"ftypavis"):
             return ".avif"
-        if content[4:12] in (b'ftypheic', b'ftypmif1'):
+        if content[4:12] in (b"ftypheic", b"ftypmif1"):
             return ".heic"
-        
+
         # Content-Type 检测
         if content_type:
             ct = content_type.lower()
@@ -436,7 +525,7 @@ class XiaohongshuMixin:
                 return ".webp"
             if "gif" in ct:
                 return ".gif"
-        
+
         # 默认 jpeg
         return ".jpeg"
 
@@ -466,6 +555,7 @@ class XiaohongshuMixin:
         except Exception as exc:
             logger.warning("⚠️ 小红书卡片渲染失败: %s", str(exc))
             return None
+
     # endregion
 
     # region 小红书处理
@@ -474,7 +564,7 @@ class XiaohongshuMixin:
     ):
         process_start = time.perf_counter()
         timing = {}  # 记录各步骤耗时
-        
+
         self._refresh_config()
         if not self.xhs_enabled:
             return
@@ -484,7 +574,7 @@ class XiaohongshuMixin:
         await self._send_reaction_emoji(event, source_tag)
 
         target_link = (target_link or "").strip()
-            
+
         if not target_link:
             logger.warning("⚠️ 小红书链接为空%s", source_tag)
             return
@@ -511,7 +601,7 @@ class XiaohongshuMixin:
                 if attempt < retry_count and self._is_retryable_xhs_exception(exc):
                     wait_time = min(
                         XHS_PARSE_RETRY_MAX_DELAY_SEC,
-                        XHS_PARSE_RETRY_BASE_DELAY_SEC * (2 ** attempt),
+                        XHS_PARSE_RETRY_BASE_DELAY_SEC * (2**attempt),
                     )
                     logger.warning(
                         "⚠️ 小红书解析失败%s: %s，%.1fs后重试 (%d/%d)",
@@ -530,7 +620,7 @@ class XiaohongshuMixin:
                 if attempt < retry_count and self._is_retryable_xhs_exception(exc):
                     wait_time = min(
                         XHS_PARSE_RETRY_MAX_DELAY_SEC,
-                        XHS_PARSE_RETRY_BASE_DELAY_SEC * (2 ** attempt),
+                        XHS_PARSE_RETRY_BASE_DELAY_SEC * (2**attempt),
                     )
                     logger.warning(
                         "⚠️ 小红书解析异常%s: %s，%.1fs后重试 (%d/%d)",
@@ -582,7 +672,7 @@ class XiaohongshuMixin:
 
         # region 下载阶段
         download_start = time.perf_counter()
-        
+
         # 视频笔记：优先下载视频
         if result.video_url:
             try:
@@ -592,7 +682,9 @@ class XiaohongshuMixin:
                 media_paths.append(video_path)
                 media_components.append(Video.fromFileSystem(str(video_path.resolve())))
                 # 下载封面图
-                cover_url = result.cover_url or (result.image_urls[0] if result.image_urls else None)
+                cover_url = result.cover_url or (
+                    result.image_urls[0] if result.image_urls else None
+                )
                 if cover_url:
                     try:
                         cover_path = await self._download_xhs_image(
@@ -602,11 +694,17 @@ class XiaohongshuMixin:
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
-                        logger.warning("⚠️ 小红书封面下载失败%s: %s", source_tag, str(exc))
+                        logger.warning(
+                            "⚠️ 小红书封面下载失败%s: %s", source_tag, str(exc)
+                        )
             except asyncio.CancelledError:
                 raise
             except SizeLimitExceeded:
-                logger.warning("⚠️ 小红书视频大小超过限制%s (%dMB)", source_tag, self.max_video_size_mb)
+                logger.warning(
+                    "⚠️ 小红书视频大小超过限制%s (%dMB)",
+                    source_tag,
+                    self.max_video_size_mb,
+                )
                 return
             except Exception as exc:
                 logger.error("❌ 小红书视频下载失败%s: %s", source_tag, str(exc))
@@ -617,7 +715,9 @@ class XiaohongshuMixin:
             file_ids = result.file_ids[: self.xhs_max_media] if result.file_ids else []
             if getattr(self, "xhs_concurrent_download", False):
                 # 并发下载
-                async def _download_one(i: int, url: str) -> tuple[int, Path | None, Exception | None]:
+                async def _download_one(
+                    i: int, url: str
+                ) -> tuple[int, Path | None, Exception | None]:
                     file_id = file_ids[i] if i < len(file_ids) else None
                     try:
                         path = await self._download_xhs_image(
@@ -637,10 +737,18 @@ class XiaohongshuMixin:
                     if path is not None:
                         image_paths.append(path)
                         media_paths.append(path)
-                        media_components.append(Image.fromFileSystem(str(path.resolve())))
+                        media_components.append(
+                            Image.fromFileSystem(str(path.resolve()))
+                        )
                     else:
                         failed_images += 1
-                        logger.warning("⚠️ 小红书图片下载失败%s [%d/%d]: %s", source_tag, i + 1, len(image_urls), str(exc))
+                        logger.warning(
+                            "⚠️ 小红书图片下载失败%s [%d/%d]: %s",
+                            source_tag,
+                            i + 1,
+                            len(image_urls),
+                            str(exc),
+                        )
             else:
                 # 串行下载
                 for i, url in enumerate(image_urls):
@@ -651,20 +759,31 @@ class XiaohongshuMixin:
                         )
                         image_paths.append(image_path)
                         media_paths.append(image_path)
-                        media_components.append(Image.fromFileSystem(str(image_path.resolve())))
+                        media_components.append(
+                            Image.fromFileSystem(str(image_path.resolve()))
+                        )
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
                         failed_images += 1
-                        logger.warning("⚠️ 小红书图片下载失败%s [%d/%d]: %s", source_tag, i + 1, len(image_urls), str(exc))
-        
+                        logger.warning(
+                            "⚠️ 小红书图片下载失败%s [%d/%d]: %s",
+                            source_tag,
+                            i + 1,
+                            len(image_urls),
+                            str(exc),
+                        )
+
         timing["download"] = time.perf_counter() - download_start
         # endregion
 
         if not media_components:
             logger.debug(
                 "XHS 无媒体下载成功%s: url=%s, 失败图片=%d, 下载耗时=%.2fs",
-                source_tag, result.source_url, failed_images, timing["download"]
+                source_tag,
+                result.source_url,
+                failed_images,
+                timing["download"],
             )
             return
 
@@ -689,16 +808,26 @@ class XiaohongshuMixin:
         # 转换超过QQ限制的图片为文件组件
         def _convert_to_file_if_needed(component):
             """如果图片超过QQ限制，转为 File 组件上传"""
-            if isinstance(component, Image) and hasattr(component, 'path') and component.path:
+            if (
+                isinstance(component, Image)
+                and hasattr(component, "path")
+                and component.path
+            ):
                 try:
-                    qq_image_size_limit_mb = getattr(self, "xhs_qq_image_size_limit_mb", 30)
+                    qq_image_size_limit_mb = getattr(
+                        self, "xhs_qq_image_size_limit_mb", 30
+                    )
                     if qq_image_size_limit_mb <= 0:
                         return component
                     file_size = Path(component.path).stat().st_size
                     if file_size > qq_image_size_limit_mb * 1024 * 1024:
                         file_name = Path(component.path).name
-                        logger.info("XHS 图片 %.1fMB 超过 %dMB QQ限制，转为文件上传: %s",
-                                     file_size / 1024 / 1024, qq_image_size_limit_mb, file_name)
+                        logger.info(
+                            "XHS 图片 %.1fMB 超过 %dMB QQ限制，转为文件上传: %s",
+                            file_size / 1024 / 1024,
+                            qq_image_size_limit_mb,
+                            file_name,
+                        )
                         return File(file=component.path, name=file_name)
                 except Exception:
                     pass
@@ -713,10 +842,14 @@ class XiaohongshuMixin:
         total_size_mb = total_size_bytes / (1024 * 1024)
 
         # 判断是否触发解合阈值
-        threshold = getattr(self, 'xhs_auto_unmerge_threshold_mb', 20)
+        threshold = getattr(self, "xhs_auto_unmerge_threshold_mb", 20)
         force_unmerge = False
         if threshold > 0 and total_size_mb > threshold:
-            logger.info("XHS 媒体总大小 (%.2fMB) 超过阈值 (%dMB)，强制逐条发送", total_size_mb, threshold)
+            logger.info(
+                "XHS 媒体总大小 (%.2fMB) 超过阈值 (%dMB)，强制逐条发送",
+                total_size_mb,
+                threshold,
+            )
             force_unmerge = True
 
         # 判断是否为图文笔记（有图片路径）
@@ -734,7 +867,10 @@ class XiaohongshuMixin:
             nodes = Nodes([])
             sender_uin = self._get_merge_sender_uin(event)
             for component in media_components:
-                nodes.nodes.append(Node(uin=sender_uin, content=[component]))
+                merge_component = await self._prepare_component_for_merge_send(
+                    component
+                )
+                nodes.nodes.append(Node(uin=sender_uin, content=[merge_component]))
             yield event.chain_result([nodes])
         else:
             if is_image_post:
@@ -772,6 +908,7 @@ class XiaohongshuMixin:
         # 发送完成后立即清理文件（Direct Send Pattern：此时文件已被读取）
         if media_paths:
             await self.cleanup_files(media_paths, [])
+
     # endregion
 
     # region 事件处理器
@@ -793,6 +930,7 @@ class XiaohongshuMixin:
         except asyncio.CancelledError:
             logger.info("♻️ 小红书解析任务已中断")
             return
+
     # endregion
 
 

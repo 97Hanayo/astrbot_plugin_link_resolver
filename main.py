@@ -30,8 +30,14 @@ from .core.xiaohongshu.handler import XiaohongshuMixin
 TASK_NAME_PREFIX = "link-resolver-parse"
 # endregion
 
+
 # region LinkResolver 类
-@register("astrbot_plugin_link_resolver", "acacia", "解析 & 下载 Bilibili/抖音/小红书", "1.0.9")
+@register(
+    "astrbot_plugin_link_resolver",
+    "acacia",
+    "解析 & 下载 Bilibili/抖音/小红书",
+    "1.0.9",
+)
 class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
     def __init__(self, context: Context, config: AstrBotConfig | dict | None = None):
         super().__init__(context)
@@ -61,27 +67,45 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
 
     def _refresh_config(self) -> None:
         # 平台启用列表
-        enable_platforms = self._get_config_value("enable_platforms", ["B站", "抖音", "小红书"])
+        enable_platforms = self._get_config_value(
+            "enable_platforms", ["B站", "抖音", "小红书"]
+        )
         if not isinstance(enable_platforms, list):
             enable_platforms = ["B站", "抖音", "小红书"]
         self.bili_enabled = "B站" in enable_platforms
         self.douyin_enabled = "抖音" in enable_platforms
         self.xhs_enabled = "小红书" in enable_platforms
-        
+
         # B站配置
-        self.quality_label = str(self._get_config_value("bili_settings.video_quality", "1080P高帧率"))
-        self.codecs_label = str(self._get_config_value("bili_settings.video_codecs", "AVC"))
+        self.quality_label = str(
+            self._get_config_value("bili_settings.video_quality", "1080P高帧率")
+        )
+        self.codecs_label = str(
+            self._get_config_value("bili_settings.video_codecs", "AVC")
+        )
         self.allow_hdr = bool(self._get_config_value("bili_settings.allow_hdr", False))
-        self.allow_dolby = bool(self._get_config_value("bili_settings.allow_dolby", False))
-        self.bili_merge_send = bool(self._get_config_value("bili_settings.merge_send", False))
-        self.enable_multi_page = bool(self._get_config_value("bili_settings.enable_multi_page", True))
-        self.multi_page_max = max(1, int(self._get_config_value("bili_settings.multi_page_max", 3)))
+        self.allow_dolby = bool(
+            self._get_config_value("bili_settings.allow_dolby", False)
+        )
+        self.bili_merge_send = bool(
+            self._get_config_value("bili_settings.merge_send", False)
+        )
+        self.enable_multi_page = bool(
+            self._get_config_value("bili_settings.enable_multi_page", True)
+        )
+        self.multi_page_max = max(
+            1, int(self._get_config_value("bili_settings.multi_page_max", 3))
+        )
         self.bili_max_duration_seconds = max(
             0, int(self._get_config_value("bili_settings.max_duration_seconds", 300))
         )
-        self.allow_quality_fallback = bool(self._get_config_value("bili_settings.allow_quality_fallback", True))
+        self.allow_quality_fallback = bool(
+            self._get_config_value("bili_settings.allow_quality_fallback", True)
+        )
         # 从配置读取 Cookie 并写入文件
-        bili_cookies_str = str(self._get_config_value("bili_settings.cookies", "")).strip()
+        bili_cookies_str = str(
+            self._get_config_value("bili_settings.cookies", "")
+        ).strip()
         if bili_cookies_str:
             try:
                 cookies_file = get_bili_cookies_file()
@@ -98,30 +122,58 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
                 logger.info("🍪 B站 Cookie 已从配置写入文件")
             except Exception as exc:
                 logger.warning("⚠️ 写入 B站 Cookie 文件失败: %s", str(exc))
-        
+
         # 抖音配置
-        self.douyin_max_media = max(1, int(self._get_config_value("douyin_settings.max_media", 99)))
-        self.douyin_merge_send = bool(self._get_config_value("douyin_settings.merge_send", False))
-        
+        self.douyin_max_media = max(
+            1, int(self._get_config_value("douyin_settings.max_media", 99))
+        )
+        self.douyin_merge_send = bool(
+            self._get_config_value("douyin_settings.merge_send", False)
+        )
+
         # 小红书配置
-        self.xhs_max_media = max(1, int(self._get_config_value("xhs_settings.max_media", 99)))
-        self.xhs_merge_send = bool(self._get_config_value("xhs_settings.merge_send", False))
-        self.xhs_download_original = bool(self._get_config_value("xhs_settings.download_original", True))
-        self.xhs_prefer_ci_png = bool(self._get_config_value("xhs_settings.prefer_ci_png", False))
-        self.xhs_auto_unmerge_threshold_mb = int(self._get_config_value("xhs_settings.auto_unmerge_threshold_mb", 50))
+        self.xhs_max_media = max(
+            1, int(self._get_config_value("xhs_settings.max_media", 99))
+        )
+        self.xhs_merge_send = bool(
+            self._get_config_value("xhs_settings.merge_send", False)
+        )
+        self.xhs_download_original = bool(
+            self._get_config_value("xhs_settings.download_original", True)
+        )
+        self.xhs_prefer_ci_png = bool(
+            self._get_config_value("xhs_settings.prefer_ci_png", False)
+        )
+        self.xhs_auto_unmerge_threshold_mb = int(
+            self._get_config_value("xhs_settings.auto_unmerge_threshold_mb", 50)
+        )
         self.xhs_qq_image_size_limit_mb = max(
             0, int(self._get_config_value("xhs_settings.qq_image_size_limit_mb", 30))
         )
-        self.xhs_concurrent_download = bool(self._get_config_value("xhs_settings.concurrent_download", True))
-        
+        self.xhs_concurrent_download = bool(
+            self._get_config_value("xhs_settings.concurrent_download", True)
+        )
+
         # 通用配置
-        self.retry_count = max(0, int(self._get_config_value("general_settings.retry_count", 3)))
-        self.reaction_emoji_enabled = bool(self._get_config_value("general_settings.reaction_emoji_enabled", True))
-        self.reaction_emoji_id = self._coerce_positive_int(self._get_config_value("general_settings.reaction_emoji_id", 128169), 128169)
+        self.retry_count = max(
+            0, int(self._get_config_value("general_settings.retry_count", 3))
+        )
+        self.reaction_emoji_enabled = bool(
+            self._get_config_value("general_settings.reaction_emoji_enabled", True)
+        )
+        self.reaction_emoji_id = self._coerce_positive_int(
+            self._get_config_value("general_settings.reaction_emoji_id", 128169), 128169
+        )
         self.reaction_emoji_type = "1"  # 固定值，无需配置
-        self.max_video_size_mb = int(self._get_config_value("general_settings.max_video_size_mb", 200))
-        self.merge_send_as_sender = bool(self._get_config_value("general_settings.merge_send_as_sender", False))
-        _mode = str(self._get_config_value("general_settings.error_notify_mode", "静默")).strip()
+        self.max_video_size_mb = int(
+            self._get_config_value("general_settings.max_video_size_mb", 200)
+        )
+        self.merge_send_as_sender = bool(
+            self._get_config_value("general_settings.merge_send_as_sender", False)
+        )
+        _mode = str(
+            self._get_config_value("general_settings.error_notify_mode", "静默")
+        ).strip()
         self.error_notify_mode = _mode if _mode in ("静默", "脱敏", "报错") else "静默"
 
         alias = self._normalize_quality_alias(self.quality_label)
@@ -131,7 +183,9 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
             self.allow_dolby = True
 
         self.quality_enum_name, self.video_quality = self._resolve_quality(alias)
-        self.codecs_enum_name, self.video_codecs = self._resolve_codecs(self.codecs_label)
+        self.codecs_enum_name, self.video_codecs = self._resolve_codecs(
+            self.codecs_label
+        )
 
         # 构建启用平台列表
         enabled_list = [p for p in ["B站", "抖音", "小红书"] if p in enable_platforms]
@@ -156,10 +210,13 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
             xhs_image_limit_label,
             self.retry_count,
         )
+
     # endregion
 
     # region 解析任务管理
-    def _register_parse_task(self, kind: str, event: AstrMessageEvent | None = None) -> None:
+    def _register_parse_task(
+        self, kind: str, event: AstrMessageEvent | None = None
+    ) -> None:
         task = asyncio.current_task()
         if task is None:
             return
@@ -238,14 +295,22 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         if cancelled:
             sample = ", ".join(cancelled[:5])
             suffix = "..." if len(cancelled) > 5 else ""
-            logger.info("♻️ 插件重载，已中断旧解析任务 %d 个（已进入发送阶段的任务无法终止）: %s%s", len(cancelled), sample, suffix)
+            logger.info(
+                "♻️ 插件重载，已中断旧解析任务 %d 个（已进入发送阶段的任务无法终止）: %s%s",
+                len(cancelled),
+                sample,
+                suffix,
+            )
         else:
             logger.info("♻️ 插件重载，未发现可中断的旧解析任务")
+
     # endregion
 
     # region 通用工具
     def _has_json_component(self, event: AstrMessageEvent) -> bool:
-        if not hasattr(event, "message_obj") or not hasattr(event.message_obj, "message"):
+        if not hasattr(event, "message_obj") or not hasattr(
+            event.message_obj, "message"
+        ):
             return False
         for component in event.message_obj.message:
             if isinstance(component, dict):
@@ -324,7 +389,10 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
                 except Exception:
                     return None
             if isinstance(value, dict):
-                if any(key in value for key in ("meta", "prompt", "ver", "app", "view", "config")):
+                if any(
+                    key in value
+                    for key in ("meta", "prompt", "ver", "app", "view", "config")
+                ):
                     return value
                 if "data" in value:
                     return unwrap(value["data"], depth + 1)
@@ -376,6 +444,7 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         except Exception as exc:
             logger.warning("⚠️ 解析 JSON 消息组件失败: %s", str(exc))
         return links
+
     # endregion
 
     # region 消息基础判断
@@ -388,25 +457,25 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
 
     async def _is_bot_muted(self, event: AstrMessageEvent) -> bool:
         """检测 Bot 是否在群中被禁言。
-        
+
         通过 OneBot V11 的 get_group_member_info API 获取 Bot 在群中的信息，
         检查 shut_up_timestamp 字段判断是否被禁言。
-        
+
         Returns:
             True 如果 Bot 被禁言，False 如果未被禁言或无法检测。
         """
         group_id = event.get_group_id()
         if not group_id:
             return False
-        
+
         bot = getattr(event, "bot", None)
         if bot is None or not hasattr(bot, "call_action"):
             return False
-        
+
         self_id = event.get_self_id()
         if not self_id:
             return False
-        
+
         try:
             member_info = await bot.call_action(
                 "get_group_member_info",
@@ -420,8 +489,9 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
                 return True
         except Exception as exc:
             logger.debug("检测禁言状态失败: %s", str(exc))
-        
+
         return False
+
     # endregion
 
     # region 表情回应
@@ -444,7 +514,9 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
                 return mid
         return None
 
-    async def _send_reaction_emoji(self, event: AstrMessageEvent, source_tag: str) -> None:
+    async def _send_reaction_emoji(
+        self, event: AstrMessageEvent, source_tag: str
+    ) -> None:
         if not self.reaction_emoji_enabled:
             return
         if not event.get_group_id():
@@ -467,6 +539,7 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
             )
         except Exception as exc:
             logger.warning("⚠️ 表情回应失败%s: %s", source_tag, str(exc))
+
     # endregion
 
     # region 下载工具
@@ -479,7 +552,9 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         try:
             headers = headers or {}
             cookies = cookies or {}
-            async with httpx.AsyncClient(timeout=10.0, headers=headers, cookies=cookies) as client:
+            async with httpx.AsyncClient(
+                timeout=10.0, headers=headers, cookies=cookies
+            ) as client:
                 response = await client.head(url, follow_redirects=True)
                 if response.status_code >= 400:
                     return None
@@ -533,14 +608,22 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
             try:
                 hdrs = headers or {}
                 cks = cookies or {}
-                async with httpx.AsyncClient(timeout=None, headers=hdrs, cookies=cks) as client:
-                    async with client.stream("GET", url, follow_redirects=True) as response:
+                async with httpx.AsyncClient(
+                    timeout=None, headers=hdrs, cookies=cks
+                ) as client:
+                    async with client.stream(
+                        "GET", url, follow_redirects=True
+                    ) as response:
                         response.raise_for_status()
                         content_length = response.headers.get("Content-Length")
-                        if content_length and max_bytes and int(content_length) > max_bytes:
+                        if (
+                            content_length
+                            and max_bytes
+                            and int(content_length) > max_bytes
+                        ):
                             raise SizeLimitExceeded("超过大小限制")
                         bytes_written = 0
-                
+
                         # Actually, wrapping each write is fine if chunks are large
                         with open(temp_path, "wb") as file:
                             async for chunk in response.aiter_bytes(1024 * 1024):
@@ -565,8 +648,14 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
                 if temp_path.exists():
                     await asyncio.to_thread(temp_path.unlink, missing_ok=True)
                 if attempt < retries - 1:
-                    wait_time = 2 ** attempt
-                    logger.warning("⚠️ 下载失败, %d秒后重试 (%d/%d): %s", wait_time, attempt + 1, retries, str(exc))
+                    wait_time = 2**attempt
+                    logger.warning(
+                        "⚠️ 下载失败, %d秒后重试 (%d/%d): %s",
+                        wait_time,
+                        attempt + 1,
+                        retries,
+                        str(exc),
+                    )
                     await asyncio.sleep(wait_time)
         if last_error:
             raise last_error
@@ -619,9 +708,12 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
                 while chunk := file.read(8192):
                     hasher.update(chunk)
             return hasher.hexdigest()
+
         return await asyncio.to_thread(_sync_md5)
 
-    async def cleanup_files(self, video_paths: list[Path], thumbnail_paths: list[Path]) -> None:
+    async def cleanup_files(
+        self, video_paths: list[Path], thumbnail_paths: list[Path]
+    ) -> None:
         # Direct Send Pattern: 调用此方法时，文件已通过 await event.send() 被读取完毕
         # 无需延迟，立即清理以避免与后续相同 URL 请求产生竞态条件
         for video_path in video_paths:
@@ -632,6 +724,7 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
             existed = await asyncio.to_thread(thumb_path.exists)
             await asyncio.to_thread(thumb_path.unlink, missing_ok=True)
             logger.debug("🧹 清理缩略图文件: path=%s, existed=%s", thumb_path, existed)
+
     # endregion
 
     # region 合并转发发送人获取
@@ -645,10 +738,33 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
             if sender_id:
                 return str(sender_id)
         return str(event.get_self_id())
+
+    async def _prepare_component_for_merge_send(
+        self, component: Comp.BaseMessageComponent
+    ) -> Comp.BaseMessageComponent:
+        """规避 AstrBot 合并转发视频节点未走异步 to_dict 的兼容问题。"""
+
+        if not isinstance(component, Comp.Video):
+            return component
+
+        file_ref = str(getattr(component, "file", "") or "").strip()
+        if not file_ref or file_ref.startswith(("http://", "https://", "base64://")):
+            return component
+
+        try:
+            callback_url = await component.register_to_file_service()
+        except Exception as exc:
+            logger.debug("⏭️ 合并转发视频保留本地路径: %s", str(exc))
+            return component
+
+        logger.debug("🔗 合并转发视频改用回调地址: %s", callback_url)
+        return Comp.Video.fromURL(
+            callback_url,
+            cover=getattr(component, "cover", ""),
+            c=getattr(component, "c", 2),
+        )
+
     # endregion
-
-
-
 
     # region 事件处理器
     @filter.regex(BILI_MESSAGE_PATTERN, priority=10)
@@ -686,10 +802,14 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
                 comp_payload = component
                 if isinstance(component, dict):
                     comp_type = component.get("type")
-                    if comp_type == "reply": # 忽略引用回复组件，防止回复时递归解析原消息
+                    if (
+                        comp_type == "reply"
+                    ):  # 忽略引用回复组件，防止回复时递归解析原消息
                         continue
                     comp_payload = component.get("data") or component
-                    is_json_component = bool(comp_type) and "json" in str(comp_type).lower()
+                    is_json_component = (
+                        bool(comp_type) and "json" in str(comp_type).lower()
+                    )
                 else:
                     if isinstance(component, Comp.Json):
                         is_json_component = True
@@ -711,9 +831,15 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         if not links:
             return
         unique_links = list(dict.fromkeys(links))
-        bili_links = [link for link in unique_links if re.search(BILI_MESSAGE_PATTERN, link)]
-        douyin_links = [link for link in unique_links if re.search(DOUYIN_MESSAGE_PATTERN, link)]
-        xhs_links = [link for link in unique_links if re.search(XHS_MESSAGE_PATTERN, link)]
+        bili_links = [
+            link for link in unique_links if re.search(BILI_MESSAGE_PATTERN, link)
+        ]
+        douyin_links = [
+            link for link in unique_links if re.search(DOUYIN_MESSAGE_PATTERN, link)
+        ]
+        xhs_links = [
+            link for link in unique_links if re.search(XHS_MESSAGE_PATTERN, link)
+        ]
 
         if bili_links and self.bili_enabled:
             self._register_parse_task("json-bili", event)
@@ -742,7 +868,9 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
             self._register_parse_task("json-xhs", event)
             event.should_call_llm(True)
             try:
-                async for result in self._process_xhs(event, xhs_links[0], is_from_card=True):
+                async for result in self._process_xhs(
+                    event, xhs_links[0], is_from_card=True
+                ):
                     yield result
                 return
             except asyncio.CancelledError:
@@ -750,5 +878,8 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
                 return
 
         logger.warning("⚠️ 从卡片中找到链接但无法解析: %s", unique_links)
+
     # endregion
+
+
 # endregion
