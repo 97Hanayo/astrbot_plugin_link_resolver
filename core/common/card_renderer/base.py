@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 from PIL import Image, ImageDraw
 
@@ -18,7 +17,16 @@ from .components import (
     fit_image,
 )
 from .themes import CardTheme
-from .utils import find_default_font, get_line_height, get_text_width, load_font, wrap_text
+from .utils import (
+    draw_text_with_fallback,
+    find_default_font,
+    find_emoji_font,
+    get_line_height,
+    get_text_width,
+    load_font,
+    load_optional_font,
+    wrap_text,
+)
 
 # endregion
 
@@ -47,7 +55,7 @@ class CardData:
     is_video: bool = False
 
     # 扩展字段：统计数据
-    stats: dict[str, str] | None = None  # {"👁": "12.3万", "💬": "5678"}
+    stats: dict[str, str] | None = None  # {"播放": "12.3万", "评论": "5678"}
 
 
 # endregion
@@ -93,6 +101,7 @@ class UniversalCardRenderer:
         """
         self.theme = theme
         self.font_path = font_path or find_default_font()
+        self.emoji_font_path = find_emoji_font()
 
         if not self.font_path:
             try:
@@ -107,6 +116,10 @@ class UniversalCardRenderer:
         self.text_font = load_font(self.font_path, 24)
         self.meta_font = load_font(self.font_path, 20)
         self.stats_font = load_font(self.font_path, 18)
+        self.title_emoji_font = load_optional_font(self.emoji_font_path, 32)
+        self.text_emoji_font = load_optional_font(self.emoji_font_path, 24)
+        self.meta_emoji_font = load_optional_font(self.emoji_font_path, 20)
+        self.stats_emoji_font = load_optional_font(self.emoji_font_path, 18)
 
     def render(self, data: CardData) -> Image.Image:
         """渲染卡片
@@ -120,8 +133,12 @@ class UniversalCardRenderer:
         content_width = self.CARD_WIDTH - self.PADDING * 2
 
         # 文本换行
-        title_lines = wrap_text(data.title or "", self.title_font, content_width)
-        text_lines = wrap_text(data.text or "", self.text_font, content_width)
+        title_lines = wrap_text(
+            data.title or "", self.title_font, content_width, self.title_emoji_font
+        )
+        text_lines = wrap_text(
+            data.text or "", self.text_font, content_width, self.text_emoji_font
+        )
 
         # 准备图片
         images = list(data.image_paths) if data.image_paths else []
@@ -131,11 +148,21 @@ class UniversalCardRenderer:
 
         # 计算各部分高度
         gradient_height = self.GRADIENT_HEIGHT
-        meta_height = get_line_height(self.meta_font)
-        title_height = len(title_lines) * get_line_height(self.title_font) if title_lines else 0
-        text_height = len(text_lines) * get_line_height(self.text_font) if text_lines else 0
+        meta_height = get_line_height(self.meta_font, self.meta_emoji_font)
+        title_height = (
+            len(title_lines) * get_line_height(self.title_font, self.title_emoji_font)
+            if title_lines
+            else 0
+        )
+        text_height = (
+            len(text_lines) * get_line_height(self.text_font, self.text_emoji_font)
+            if text_lines
+            else 0
+        )
         grid_height = grid.height if grid else 0
-        stats_height = get_line_height(self.stats_font) if data.stats else 0
+        stats_height = (
+            get_line_height(self.stats_font, self.stats_emoji_font) if data.stats else 0
+        )
 
         # 计算卡片总高度
         card_height = gradient_height + self.PADDING + meta_height
@@ -158,7 +185,7 @@ class UniversalCardRenderer:
         )
 
         # 绘制渐变色顶部条
-        # self._draw_gradient_bar(card) 
+        # self._draw_gradient_bar(card)
 
         draw = ImageDraw.Draw(card)
 
@@ -169,11 +196,25 @@ class UniversalCardRenderer:
 
         if title_lines:
             y += self.SECTION_GAP
-            y = self._draw_lines(draw, (self.PADDING, y), title_lines, self.title_font, self.theme.text_color)
+            y = self._draw_lines(
+                draw,
+                (self.PADDING, y),
+                title_lines,
+                self.title_font,
+                self.theme.text_color,
+                self.title_emoji_font,
+            )
 
         if text_lines:
             y += self.SECTION_GAP
-            y = self._draw_lines(draw, (self.PADDING, y), text_lines, self.text_font, self.theme.text_color)
+            y = self._draw_lines(
+                draw,
+                (self.PADDING, y),
+                text_lines,
+                self.text_font,
+                self.theme.text_color,
+                self.text_emoji_font,
+            )
 
         if grid:
             y += self.SECTION_GAP
@@ -187,6 +228,7 @@ class UniversalCardRenderer:
                 y,
                 data.stats,
                 self.stats_font,
+                self.stats_emoji_font,
                 self.PADDING,
                 self.theme.meta_color,
             )
@@ -222,15 +264,24 @@ class UniversalCardRenderer:
     def _draw_meta(self, draw: ImageDraw.ImageDraw, y: int, author: str | None) -> None:
         """绘制元信息（平台标识 + 作者）"""
         label = self.theme.name
-        draw.text((self.PADDING, y), label, fill=self.theme.accent_color, font=self.meta_font)
+        draw_text_with_fallback(
+            draw,
+            (self.PADDING, y),
+            label,
+            self.meta_font,
+            self.theme.accent_color,
+            self.meta_emoji_font,
+        )
 
         if author:
-            label_width = get_text_width(self.meta_font, label)
-            draw.text(
+            label_width = get_text_width(self.meta_font, label, self.meta_emoji_font)
+            draw_text_with_fallback(
+                draw,
                 (self.PADDING + label_width + 12, y),
                 f"· {author}",
-                fill=self.theme.meta_color,
-                font=self.meta_font,
+                self.meta_font,
+                self.theme.meta_color,
+                self.meta_emoji_font,
             )
 
     def _draw_lines(
@@ -240,16 +291,19 @@ class UniversalCardRenderer:
         lines: list[str],
         font,
         fill: tuple[int, int, int],
+        emoji_font=None,
     ) -> int:
         """绘制多行文本，返回结束 y 坐标"""
         x, y = pos
-        line_height = get_line_height(font)
+        line_height = get_line_height(font, emoji_font)
         for line in lines:
-            draw.text((x, y), line, fill=fill, font=font)
+            draw_text_with_fallback(draw, (x, y), line, font, fill, emoji_font)
             y += line_height
         return y
 
-    def _prepare_images(self, paths: list[Path], content_width: int) -> ImageGrid | None:
+    def _prepare_images(
+        self, paths: list[Path], content_width: int
+    ) -> ImageGrid | None:
         """准备图片网格"""
         if not paths:
             return None
@@ -302,7 +356,9 @@ class UniversalCardRenderer:
             height=height,
         )
 
-    def _draw_grid(self, base: Image.Image, grid: ImageGrid, y: int, is_video: bool) -> None:
+    def _draw_grid(
+        self, base: Image.Image, grid: ImageGrid, y: int, is_video: bool
+    ) -> None:
         """绘制图片网格"""
         x_start = self.PADDING
 

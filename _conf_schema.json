@@ -217,6 +217,24 @@
                     "顺序循环"
                 ]
             },
+            "auto_install_fonts": {
+                "description": "自动安装插件字体",
+                "type": "bool",
+                "hint": "默认关闭。开启后在插件重载/加载时自动下载中文主字体和 Emoji 字体到插件 data/fonts 目录，并优先用于卡片渲染。会依次尝试多个下载源；若全部失败，可手动将字体文件放到 data/fonts。",
+                "default": false
+            },
+            "custom_font_path": {
+                "description": "自定义主字体路径",
+                "type": "string",
+                "hint": "可选。填写本机或容器内可访问的字体文件绝对路径；配置后优先级高于插件自动安装字体和系统字体。",
+                "default": ""
+            },
+            "custom_emoji_font_path": {
+                "description": "自定义 Emoji 字体路径",
+                "type": "string",
+                "hint": "可选。填写本机或容器内可访问的 Emoji 字体文件绝对路径；配置后优先级高于插件自动安装字体和系统 Emoji 字体。",
+                "default": ""
+            },
             "max_video_size_mb": {
                 "description": "最大视频大小 (MB)",
                 "type": "int",

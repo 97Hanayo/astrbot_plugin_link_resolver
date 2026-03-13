@@ -17,6 +17,14 @@ from astrbot.api.star import Context, Star, register
 
 from .core.bilibili import BILI_MESSAGE_PATTERN, BilibiliMixin
 from .core.common import SizeLimitExceeded, get_bili_cookies_file
+from .core.common.card_renderer import find_default_font, find_emoji_font
+from .core.common.font_manager import (
+    get_managed_font_paths,
+    get_user_font_paths,
+    install_managed_fonts,
+    set_managed_fonts_enabled,
+    set_user_font_paths,
+)
 from .core.douyin import DOUYIN_MESSAGE_PATTERN, DouyinExtractor
 from .core.douyin.handler import DouyinMixin
 from .core.weibo import WEIBO_MESSAGE_PATTERN, WeiboExtractor
@@ -25,7 +33,6 @@ from .core.xiaohongshu import (
     XHS_MESSAGE_PATTERN,
     XiaohongshuCardRenderer,
     XiaohongshuExtractor,
-    find_default_font,
 )
 from .core.xiaohongshu.handler import XiaohongshuMixin
 
@@ -43,7 +50,9 @@ TASK_NAME_PREFIX = "link-resolver-parse"
     "解析 & 下载 Bilibili/抖音/小红书/微博",
     "1.0.10",
 )
-class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, Star):
+class LinkResolverPlugin(
+    BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, Star
+):
     def __init__(self, context: Context, config: AstrBotConfig | dict | None = None):
         super().__init__(context)
         self.context = context
@@ -55,8 +64,15 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, Sta
         self.douyin_extractor = DouyinExtractor()
         self.weibo_extractor = WeiboExtractor()
         self.xhs_extractor = XiaohongshuExtractor()
-        self.xhs_renderer = XiaohongshuCardRenderer(find_default_font())
+        self.font_auto_install_enabled = False
+        self.custom_primary_font_path: str | None = None
+        self.custom_emoji_font_path: str | None = None
+        self.user_primary_font_ready = False
+        self.user_emoji_font_ready = False
+        self.managed_primary_font_ready = False
+        self.managed_emoji_font_ready = False
         self._refresh_config()
+        self.xhs_renderer = XiaohongshuCardRenderer()
 
     # region 配置
     def _get_config_value(self, key: str, default):
@@ -72,6 +88,31 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, Sta
         return val
 
     def _refresh_config(self) -> None:
+        self._configure_managed_fonts()
+        user_font_paths = get_user_font_paths()
+        managed_font_paths = get_managed_font_paths()
+        self.managed_primary_font_ready = managed_font_paths.primary is not None
+        self.managed_emoji_font_ready = managed_font_paths.emoji is not None
+        self.default_primary_font = find_default_font()
+        self.default_emoji_font = find_emoji_font()
+        self.user_primary_font_ready = bool(
+            user_font_paths.primary
+            and self.default_primary_font == user_font_paths.primary
+        )
+        self.user_emoji_font_ready = bool(
+            user_font_paths.emoji and self.default_emoji_font == user_font_paths.emoji
+        )
+        if self.custom_primary_font_path and not self.user_primary_font_ready:
+            logger.warning(
+                "⚠️ 自定义主字体路径不可用或无法加载: %s",
+                self.custom_primary_font_path,
+            )
+        if self.custom_emoji_font_path and not self.user_emoji_font_ready:
+            logger.warning(
+                "⚠️ 自定义 Emoji 字体路径不可用或无法加载: %s",
+                self.custom_emoji_font_path,
+            )
+
         # 平台启用列表
         enable_platforms = self._get_config_value(
             "enable_platforms", ["B站", "抖音", "小红书", "微博"]
@@ -252,7 +293,7 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, Sta
             else "关闭"
         )
         logger.info(
-            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,时长<=%s), 抖音(合并=%s), 小红书(原图=%s,大图转文件=%s), 微博(原图=%s,合并=%s,Cookie=%s), 重试=%d",
+            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,时长<=%s), 抖音(合并=%s), 小红书(原图=%s,大图转文件=%s), 微博(原图=%s,合并=%s,Cookie=%s), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
             "/".join(enabled_list) if enabled_list else "无",
             self.video_quality.name,
             "开" if self.bili_merge_send else "关",
@@ -263,6 +304,21 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, Sta
             "开" if self.weibo_download_original else "关",
             "开" if self.weibo_merge_send else "关",
             "开" if self.weibo_cookie_enabled else "关",
+            "开" if self.font_auto_install_enabled else "关",
+            "用户配置"
+            if self.user_primary_font_ready
+            else (
+                "插件"
+                if self.managed_primary_font_ready
+                else ("系统/现有" if self.default_primary_font else "无")
+            ),
+            "用户配置"
+            if self.user_emoji_font_ready
+            else (
+                "插件"
+                if self.managed_emoji_font_ready
+                else ("系统" if self.default_emoji_font else "无")
+            ),
             self.retry_count,
         )
         logger.info(
@@ -272,6 +328,31 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, Sta
         )
 
     # endregion
+
+    def _configure_managed_fonts(self) -> None:
+        """根据配置决定是否启用用户字体和自动安装插件字体。"""
+        custom_primary_font = str(
+            self._get_config_value("general_settings.custom_font_path", "")
+        ).strip()
+        custom_emoji_font = str(
+            self._get_config_value("general_settings.custom_emoji_font_path", "")
+        ).strip()
+        self.custom_primary_font_path = custom_primary_font or None
+        self.custom_emoji_font_path = custom_emoji_font or None
+        set_user_font_paths(custom_primary_font, custom_emoji_font)
+
+        self.font_auto_install_enabled = bool(
+            self._get_config_value("general_settings.auto_install_fonts", False)
+        )
+        set_managed_fonts_enabled(self.font_auto_install_enabled)
+        if not self.font_auto_install_enabled:
+            self.managed_primary_font_ready = False
+            self.managed_emoji_font_ready = False
+            return
+
+        managed_paths = install_managed_fonts()
+        self.managed_primary_font_ready = managed_paths.primary is not None
+        self.managed_emoji_font_ready = managed_paths.emoji is not None
 
     # region 解析任务管理
     def _register_parse_task(
@@ -1001,6 +1082,10 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, Sta
         logger.warning("⚠️ 从卡片中找到链接但无法解析: %s", unique_links)
 
     # endregion
+
+
+LinkResolver = LinkResolverPlugin
+Main = LinkResolverPlugin
 
 
 # endregion

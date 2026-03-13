@@ -1,9 +1,9 @@
 # region 导入
 import asyncio
 import json
-import time
 import re
 import shutil
+import time
 import uuid
 from dataclasses import dataclass
 from http import cookiejar
@@ -11,9 +11,6 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-from astrbot.api import logger
-from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.message_components import Image, Node, Nodes, Plain, Video
 from bilibili_api import Credential, video
 from bilibili_api.video import (
     AudioStreamDownloadURL,
@@ -23,18 +20,23 @@ from bilibili_api.video import (
     VideoStreamDownloadURL,
 )
 
+from astrbot.api import logger
+from astrbot.api.event import AstrMessageEvent, MessageChain
+from astrbot.api.message_components import Image, Node, Nodes, Plain, Video
+
 from ..common import (
     SizeLimitExceeded,
-    get_bilibili_video_path,
-    get_bilibili_thumb_path,
-    get_bilibili_card_path,
     get_bili_cookies_file,
+    get_bilibili_card_path,
+    get_bilibili_thumb_path,
+    get_bilibili_video_path,
 )
 from ..common.card_renderer import (
-    UniversalCardRenderer,
     CardData,
+    UniversalCardRenderer,
     get_theme_for_platform,
 )
+
 # endregion
 
 # region 常量与正则
@@ -903,9 +905,9 @@ class BilibiliMixin:
                 cover_path=cover_path,
                 is_video=True,
                 stats={
-                    "👁": self._format_count(views),
-                    "👍": self._format_count(likes),
-                    "🪙": self._format_count(coins),
+                    "播放": self._format_count(views),
+                    "点赞": self._format_count(likes),
+                    "投币": self._format_count(coins),
                 },
             )
 

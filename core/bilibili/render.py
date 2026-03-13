@@ -3,10 +3,10 @@
 
 使用通用渲染器 + B站主题实现。
 """
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
 
 from PIL import Image
 
@@ -76,11 +76,11 @@ class BilibiliCardRenderer:
         # 构建统计徽章
         stats: dict[str, str] = {}
         if views:
-            stats["👁"] = views
+            stats["播放"] = views
         if danmaku:
-            stats["💬"] = danmaku
+            stats["弹幕"] = danmaku
         if likes:
-            stats["👍"] = likes
+            stats["点赞"] = likes
 
         # 构建数据
         data = CardData(

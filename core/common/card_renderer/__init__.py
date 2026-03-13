@@ -4,6 +4,7 @@
 提供多平台卡片渲染能力，支持小红书、抖音、B站。
 自动根据时间切换明暗主题。
 """
+
 from .base import CardData, ImageGrid, UniversalCardRenderer
 from .components import (
     add_frosted_glass,
@@ -29,7 +30,16 @@ from .themes import (
     get_theme_for_platform,
     is_dark_mode_time,
 )
-from .utils import find_default_font, get_line_height, get_text_width, load_font, wrap_text
+from .utils import (
+    draw_text_with_fallback,
+    find_default_font,
+    find_emoji_font,
+    get_line_height,
+    get_text_width,
+    load_font,
+    load_optional_font,
+    wrap_text,
+)
 
 # endregion
 
@@ -63,8 +73,11 @@ __all__ = [
     "crop_to_square",
     "fit_image",
     # 工具
+    "draw_text_with_fallback",
     "find_default_font",
+    "find_emoji_font",
     "load_font",
+    "load_optional_font",
     "get_line_height",
     "get_text_width",
     "wrap_text",

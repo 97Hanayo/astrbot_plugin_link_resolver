@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from PIL import Image, ImageDraw, ImageFilter
 
+from .utils import draw_text_with_fallback, get_text_width
+
 # endregion
 
 
@@ -260,6 +262,7 @@ def draw_stat_badges(
     y: int,
     stats: dict[str, str],
     font,
+    emoji_font,
     x_start: int,
     color: tuple[int, int, int],
     gap: int = 24,
@@ -269,8 +272,9 @@ def draw_stat_badges(
     Args:
         draw: ImageDraw 对象
         y: 绘制位置 y 坐标
-        stats: 统计数据 {"👁": "12.3万", "💬": "5678", "👍": "9.8万"}
+        stats: 统计数据 {"播放": "12.3万", "评论": "5678", "点赞": "9.8万"}
         font: 字体
+        emoji_font: Emoji fallback 字体
         x_start: 起始 x 坐标
         color: 文字颜色
         gap: 项目间距
@@ -281,8 +285,8 @@ def draw_stat_badges(
     x = x_start
     for icon, value in stats.items():
         text = f"{icon} {value}"
-        draw.text((x, y), text, fill=color, font=font)
-        x += int(font.getlength(text)) + gap
+        draw_text_with_fallback(draw, (x, y), text, font, color, emoji_font)
+        x += get_text_width(font, text, emoji_font) + gap
     return x
 
 

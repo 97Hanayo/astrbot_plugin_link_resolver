@@ -3,6 +3,7 @@
 使用 StarTools.get_data_dir() 获取数据存储目录。
 在首次访问时延迟初始化，因为 StarTools 需要在 AstrBot 上下文初始化后才能使用。
 """
+
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,16 +22,17 @@ def _get_data_dir() -> Path:
     global _data_dir, _initialized
     if _data_dir is not None:
         return _data_dir
-    
+
     try:
         from astrbot.api.star import StarTools
+
         _data_dir = StarTools.get_data_dir(PLUGIN_NAME)
         _initialized = True
     except Exception:
         # 回退到插件目录（开发/测试环境）
         _data_dir = Path(__file__).resolve().parents[2] / "data"
         _data_dir.mkdir(parents=True, exist_ok=True)
-    
+
     return _data_dir
 
 
@@ -49,6 +51,11 @@ def get_cache_path() -> Path:
 def get_cookies_path() -> Path:
     """获取 Cookies 目录"""
     return _ensure_dir(_get_data_dir() / "cookies")
+
+
+def get_fonts_path() -> Path:
+    """获取插件字体目录"""
+    return _ensure_dir(_get_data_dir() / "fonts")
 
 
 def get_bili_cookies_file() -> Path:
@@ -118,5 +125,7 @@ def get_weibo_video_path() -> Path:
 
 def get_weibo_image_path() -> Path:
     return _ensure_dir(get_weibo_cache() / "images")
+
+
 # endregion
 # endregion

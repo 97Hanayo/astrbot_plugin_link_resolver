@@ -3,10 +3,11 @@
 
 使用通用渲染器 + 抖音主题实现。
 """
+
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from PIL import Image
 
@@ -80,9 +81,9 @@ class DouyinCardRenderer:
         # 构建统计徽章
         stats: dict[str, str] = {}
         if likes:
-            stats["❤️"] = likes
+            stats["点赞"] = likes
         if comments:
-            stats["💬"] = comments
+            stats["评论"] = comments
 
         # 构建数据
         data = CardData(

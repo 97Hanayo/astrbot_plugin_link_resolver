@@ -20,7 +20,7 @@
 ## ⚙️ 配置项
 在 AstrBot 管理面板的插件配置中可调整以下选项：
 
-`v1.0.10` 起支持微博解析；`v1.0.9` 起配置面板改为按平台分组折叠。如果你是从旧版升级，建议重新检查一次配置值。
+`v1.0.11` 起支持按需自动安装插件字体；`v1.0.10` 起支持微博解析；`v1.0.9` 起配置面板改为按平台分组折叠。如果你是从旧版升级，建议重新检查一次配置值。
 
 ### 基础设置
 
@@ -32,6 +32,9 @@
 | `general_settings.reaction_emoji_enabled` | 识别链接后是否发表情回应 | ✅ 开启 |
 | `general_settings.reaction_emoji_list` | 回应表情 ID 列表(0~5个), 空=不回应 | `[127827]` |
 | `general_settings.reaction_emoji_strategy` | `随机` 抽1个 / `顺序循环` 全部依次回应(每个 0.5s) | `随机` |
+| `general_settings.auto_install_fonts` | 重载时自动安装插件字体到 `data/fonts` | ❌ 关闭 |
+| `general_settings.custom_font_path` | 自定义主字体文件绝对路径，优先级最高 | 空 |
+| `general_settings.custom_emoji_font_path` | 自定义 Emoji 字体文件绝对路径，优先级最高 | 空 |
 | `general_settings.merge_send_as_sender` | 合并转发显示为原发送者 | ❌ 关闭 |
 | `general_settings.error_notify_mode` | 失败时群内通知模式 | `静默` |
 
@@ -161,6 +164,38 @@ astrbot_plugin_link_resolver/
 SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 ```
 - 微博分享链路风控较重，公开微博也可能出现临时访客校验。
+
+### 插件字体安装（可选）
+
+卡片渲染现在支持三层优先级：
+
+1. 自定义字体路径
+2. 插件自动安装到 `data/fonts` 的字体
+3. 系统已有字体 / 现有依赖字体
+
+如果你有合适的字体文件，在配置里填写下面两个路径即可，优先级最高：
+- `general_settings.custom_font_path`
+- `general_settings.custom_emoji_font_path`
+
+> 路径需要是 AstrBot 运行环境内可访问的字体文件绝对路径。
+
+
+如果不想自己准备字体文件，可以开启 `general_settings.auto_install_fonts`。
+
+- 插件会在加载重载时自动下载并安装：
+  - 中文主字体：`NotoSansCJKsc-Regular.otf`
+  - Emoji 字体：`OpenMoji-black-glyf.ttf`
+- 安装目录：插件数据目录下的 `data/fonts`
+  - 优先尝试国内更容易连通的镜像源; 失败后使用 GitHub 原始地址
+  - 如果全部失败，只是回退到系统现有字体
+
+也可以手动把下面两个文件放进 `data/fonts`：
+```text
+NotoSansCJKsc-Regular.otf
+OpenMoji-black-glyf.ttf
+```
+
+放置后保持 `general_settings.auto_install_fonts` 开启，并重载插件即可使用这些字体。
 
 
 
