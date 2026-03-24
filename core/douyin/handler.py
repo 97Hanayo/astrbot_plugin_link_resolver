@@ -6,23 +6,23 @@ from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.message_components import Image, Node, Nodes, Video
+from astrbot.api.message_components import Image, Node, Nodes, Plain, Video
 
 from ..common import (
     SizeLimitExceeded,
-    get_douyin_video_path,
-    get_douyin_image_path,
     get_douyin_card_path,
+    get_douyin_image_path,
+    get_douyin_video_path,
 )
-from .render import DouyinCardRenderer
 from . import (
     ANDROID_HEADERS,
-    DOUYIN_MESSAGE_PATTERN,
     IOS_HEADERS,
     DouyinParseError,
     DouyinResult,
     extract_douyin_links,
 )
+from .render import DouyinCardRenderer
+
 # endregion
 
 
@@ -86,6 +86,47 @@ class DouyinMixin:
         if count >= 10000:
             return f"{count / 10000:.1f}万"
         return str(count)
+
+    @staticmethod
+    def _format_duration(seconds: int | None) -> str | None:
+        if not seconds or seconds <= 0:
+            return None
+        total_seconds = int(seconds)
+        minutes, secs = divmod(total_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours > 0:
+            return f"{hours}:{minutes:02d}:{secs:02d}"
+        return f"{minutes}:{secs:02d}"
+
+    def _build_douyin_summary(
+        self,
+        result: DouyinResult,
+        *,
+        image_count: int,
+        dynamic_count: int,
+        display_link: str | None = None,
+    ) -> str:
+        author = result.author or "未知作者"
+        title = result.title or "未知标题"
+        lines = ["🎵 抖音", f"作者：{author}", f"标题：{title}"]
+        if result.likes is not None:
+            lines.append(f"点赞：{self._format_count(result.likes)}")
+        if result.comments is not None:
+            lines.append(f"评论：{self._format_count(result.comments)}")
+        duration = DouyinMixin._format_duration(result.duration)
+        if duration:
+            lines.append(f"时长：{duration}")
+        if image_count or dynamic_count:
+            media_label = f"图片 {image_count} 张"
+            if dynamic_count:
+                media_label += f"，动图 {dynamic_count} 个"
+        else:
+            media_label = "视频"
+        lines.append(f"媒体：{media_label}")
+        summary_link = display_link or result.source_url
+        if summary_link:
+            lines.append(f"链接：{summary_link}")
+        return "\n".join(lines)
 
     async def _render_douyin_card(
         self,
@@ -380,15 +421,23 @@ class DouyinMixin:
 
         # 判断是否为图文笔记（有图片或动图）
         is_image_post = bool(image_urls or dynamic_urls)
-        # 图文笔记始终合并转发+卡片；视频笔记根据配置决定
+        # 图文笔记始终合并转发；视频笔记根据配置决定
         enable_merge_send = is_image_post or getattr(self, "douyin_merge_send", True)
+        render_card = getattr(self, "douyin_render_card", False)
+        summary_text = None
+        if enable_merge_send and not render_card:
+            summary_text = self._build_douyin_summary(
+                result,
+                image_count=len(image_urls),
+                dynamic_count=len(dynamic_urls),
+                display_link=target_link,
+            )
 
         # region 渲染阶段
         render_start = time.perf_counter()
         card_path = None
 
-        # 图文笔记始终渲染卡片；视频笔记仅在合并发送时渲染
-        if is_image_post or enable_merge_send:
+        if enable_merge_send and render_card:
             card_path = await self._render_douyin_card(
                 title=title,
                 author=author,
@@ -404,11 +453,13 @@ class DouyinMixin:
         send_start = time.perf_counter()
 
         if enable_merge_send:
-            # 合并转发：卡片 + 媒体
+            # 合并转发：摘要 + 媒体
             nodes = Nodes([])
             sender_uin = self._get_merge_sender_uin(event)
 
-            if card_path and card_path.exists():
+            if summary_text:
+                nodes.nodes.append(Node(uin=sender_uin, content=[Plain(summary_text)]))
+            elif card_path and card_path.exists():
                 nodes.nodes.append(
                     Node(
                         uin=sender_uin,
@@ -477,6 +528,11 @@ class DouyinMixin:
         except asyncio.CancelledError:
             logger.info("♻️ 抖音解析任务已中断")
             return
+
+        # endregion
+
+        # endregion
+        return
 
     # endregion
 

@@ -81,6 +81,7 @@
 |--------|------|--------|
 | `douyin_settings.max_media` | 图集最多发送媒体数 | 99 |
 | `douyin_settings.merge_send` | 视频使用合并转发 | ❌ 关闭 |
+| `douyin_settings.summary_mode` | 合并发送时使用 `文字摘要` 或 `渲染卡片` | `文字摘要` |
 
 ### 微博设置
 
@@ -97,6 +98,7 @@
 |--------|------|--------|
 | `xhs_settings.max_media` | 图集最多发送媒体数 | 99 |
 | `xhs_settings.merge_send` | 视频使用合并转发 | ❌ 关闭 |
+| `xhs_settings.summary_mode` | 合并/逐条发送前使用 `文字摘要` 或 `渲染卡片` | `文字摘要` |
 | `xhs_settings.download_original` | 下载原图（通常为 JPEG） | ✅ 开启 |
 | `xhs_settings.prefer_ci_png` | 优先将图片转码为 PNG | ✅ 开启 |
 | `xhs_settings.concurrent_download` | 并发下载图集图片 | ✅ 开启 |

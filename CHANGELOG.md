@@ -1,5 +1,25 @@
 # Changelog
 
+
+## v1.0.10
+
+### 新增
+
+- 新增微博解析
+- 配置支持图片数量、视频合并发送、原图优先和 Cookie 配置
+- 微博正文优先展开长文，图片优先原图/大图，视频优先最高码率
+
+- 新增 `general_settings.auto_install_fonts` 配置项，可在插件加载时自动安装托管字体
+- 新增 `general_settings.custom_font_path` 配置项，支持指定自定义主字体路径
+- 新增 `general_settings.custom_emoji_font_path` 配置项，支持指定自定义 Emoji 字体路径
+- 卡片渲染字体优先级调整为：用户配置 > 插件托管字体 > 系统字体
+
+### 修复
+
+- 修复跨机器部署时合并转发视频使用本地 `file://` 路径，导致 NapCat `ENOENT` 的问题
+  - 合并转发中的视频组件现在会优先注册到 AstrBot 文件服务，转换为可访问的 callback URL
+- 修复小红书入口层把协程当作异步生成器迭代，导致 `async for requires __aiter__` 的问题
+
 ## v1.0.9
 
 ### 变更

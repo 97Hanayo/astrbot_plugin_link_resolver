@@ -7,25 +7,26 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import aiohttp
+
 from astrbot.api import logger
-from astrbot.api.event import AstrMessageEvent, MessageChain
-from astrbot.api.message_components import File, Image, Node, Nodes, Video
+from astrbot.api.event import AstrMessageEvent
+from astrbot.api.message_components import File, Image, Node, Nodes, Plain, Video
 
 from ..common import (
     SizeLimitExceeded,
-    get_xhs_video_path,
-    get_xhs_image_path,
     get_xhs_card_path,
+    get_xhs_image_path,
+    get_xhs_video_path,
 )
 from . import (
     XHS_HEADERS,
-    XHS_MESSAGE_PATTERN,
     XiaohongshuParseError,
-    XiaohongshuRetryableError,
     XiaohongshuResult,
+    XiaohongshuRetryableError,
     extract_xhs_links,
 )
 from .extractor import _XHS_DOWNLOAD_UA
+
 # endregion
 
 # region 解析策略常量
@@ -325,7 +326,6 @@ class XiaohongshuMixin:
         # endregion
 
         # region CDN 兜底策略
-        fallback_start = time.perf_counter()
 
         # 基础 Headers
         base_headers = {
@@ -529,6 +529,48 @@ class XiaohongshuMixin:
         # 默认 jpeg
         return ".jpeg"
 
+    @staticmethod
+    def _clean_xhs_summary_text(text: str) -> str:
+        # 小红书原始 desc / shareDesc 的话题标签通常形如 #xxx[话题]#。
+        # 文字摘要直接展示原文时会把这个内部标记带出来，因此仅在摘要里清洗成 #xxx#。
+        return re.sub(r"#([^#\n]+?)\[话题\]#", r"#\1#", text)
+
+    @staticmethod
+    def _clean_xhs_display_link(link: str) -> str:
+        # 仅清洗摘要展示用链接，不影响真实解析请求。
+        # JSON 卡片里的 jumpUrl 常带 app_platform/xsec_token/share_channel 等参数，展示时去掉后缀更简洁。
+        try:
+            parsed = urlparse(link)
+        except Exception:
+            return link
+        host = parsed.netloc.lower()
+        if "xiaohongshu.com" not in host:
+            return link
+        return parsed._replace(query="", fragment="").geturl()
+
+    def _build_xhs_summary(
+        self,
+        result: XiaohongshuResult,
+        *,
+        image_count: int,
+        is_video: bool,
+        display_link: str | None = None,
+    ) -> str:
+        author = result.author or "未知作者"
+        title = result.title or "未知标题"
+        lines = ["🍠 小红书", f"作者：{author}", f"标题：{title}"]
+        if result.text:
+            lines.append(
+                f"正文：{XiaohongshuMixin._clean_xhs_summary_text(result.text)}"
+            )
+        lines.append(f"媒体：{'视频' if is_video else f'图片 {image_count} 张'}")
+        summary_link = display_link or result.source_url
+        if summary_link:
+            lines.append(
+                f"链接：{XiaohongshuMixin._clean_xhs_display_link(summary_link)}"
+            )
+        return "\n".join(lines)
+
     async def _render_xhs_card(
         self,
         result: XiaohongshuResult,
@@ -658,7 +700,6 @@ class XiaohongshuMixin:
         )
 
         title = result.title or "未知标题"
-        author = result.author or "未知作者"
 
         if not result.video_url and not result.image_urls:
             logger.warning("⚠️ 小红书未找到可下载的媒体%s: %s", source_tag, target_link)
@@ -787,15 +828,31 @@ class XiaohongshuMixin:
             )
             return
 
+        summary_enabled = bool(image_paths) or bool(
+            result.video_url and self.xhs_merge_send
+        )
+        render_card = getattr(self, "xhs_render_card", False)
+        is_video_post = bool(result.video_url and not image_paths)
+        summary_text = None
+        if summary_enabled and not render_card:
+            summary_text = self._build_xhs_summary(
+                result,
+                image_count=len(image_paths),
+                is_video=is_video_post,
+                display_link=target_link,
+            )
+
         # region 渲染阶段
         render_start = time.perf_counter()
-        card_path = await self._render_xhs_card(
-            result,
-            image_paths=image_paths,
-            cover_path=cover_path,
-            is_video=bool(result.video_url and not image_paths),
-            request_id=request_id,
-        )
+        card_path = None
+        if summary_enabled and render_card:
+            card_path = await self._render_xhs_card(
+                result,
+                image_paths=image_paths,
+                cover_path=cover_path,
+                is_video=is_video_post,
+                request_id=request_id,
+            )
         if card_path:
             media_paths.append(card_path)
             media_components.insert(0, Image.fromFileSystem(str(card_path.resolve())))
@@ -866,6 +923,8 @@ class XiaohongshuMixin:
         if should_merge:
             nodes = Nodes([])
             sender_uin = self._get_merge_sender_uin(event)
+            if summary_text:
+                nodes.nodes.append(Node(uin=sender_uin, content=[Plain(summary_text)]))
             for component in media_components:
                 merge_component = await self._prepare_component_for_merge_send(
                     component
@@ -875,6 +934,8 @@ class XiaohongshuMixin:
         else:
             if is_image_post:
                 # 图文笔记逐条发送（触发解合阈值时）
+                if summary_text:
+                    yield event.chain_result([Plain(summary_text)])
                 for i, component in enumerate(media_components):
                     yield event.chain_result([component])
                     if i < len(media_components) - 1:
@@ -926,9 +987,7 @@ class XiaohongshuMixin:
         if not links:
             return
         try:
-            async for result in self._process_xhs(
-                event, links[0], is_from_card=False
-            ):
+            async for result in self._process_xhs(event, links[0], is_from_card=False):
                 yield result
         except asyncio.CancelledError:
             logger.info("♻️ 小红书解析任务已中断")

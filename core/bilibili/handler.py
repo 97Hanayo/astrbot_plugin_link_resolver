@@ -879,6 +879,49 @@ class BilibiliMixin:
             return f"{count / 10000:.1f}万"
         return str(count)
 
+    @staticmethod
+    def _format_duration(seconds: int | None) -> str | None:
+        if not seconds or seconds <= 0:
+            return None
+        total_seconds = int(seconds)
+        minutes, secs = divmod(total_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours > 0:
+            return f"{hours}:{minutes:02d}:{secs:02d}"
+        return f"{minutes}:{secs:02d}"
+
+    def _build_bili_summary(
+        self,
+        *,
+        title: str,
+        up_name: str,
+        view_count: int,
+        likes: int,
+        coins: int,
+        shares: int,
+        comments: int,
+        duration_seconds: int,
+        quality: str,
+        source_url: str | None,
+    ) -> str:
+        lines = [
+            "🎬 B站",
+            f"标题：{title}",
+            f"UP主：{up_name}",
+            f"播放：{self._format_count(view_count)}",
+            f"点赞：{self._format_count(likes)}",
+            f"投币：{self._format_count(coins)}",
+            f"分享：{self._format_count(shares)}",
+            f"评论：{self._format_count(comments)}",
+        ]
+        duration = BilibiliMixin._format_duration(duration_seconds)
+        if duration:
+            lines.append(f"时长：{duration}")
+        lines.append(f"画质：{quality}")
+        if source_url:
+            lines.append(f"链接：{source_url}")
+        return "\n".join(lines)
+
     async def _render_bili_card(
         self,
         *,
@@ -1217,7 +1260,9 @@ class BilibiliMixin:
             # region 渲染阶段
             render_start = time.perf_counter()
             card_path = None
-            if self.bili_merge_send:
+            summary_text = None
+            render_card = getattr(self, "bili_render_card", False)
+            if self.bili_merge_send and render_card:
                 card_path = await self._render_bili_card(
                     title=title,
                     author=up_name,
@@ -1226,6 +1271,19 @@ class BilibiliMixin:
                     views=view_count,
                     likes=likes,
                     coins=coins,
+                )
+            elif self.bili_merge_send:
+                summary_text = self._build_bili_summary(
+                    title=title,
+                    up_name=up_name,
+                    view_count=view_count,
+                    likes=likes,
+                    coins=coins,
+                    shares=shares,
+                    comments=comments,
+                    duration_seconds=duration_seconds,
+                    quality=actual_quality,
+                    source_url=ref.source_url,
                 )
             timing["render"] = time.perf_counter() - render_start
             # endregion
@@ -1242,7 +1300,11 @@ class BilibiliMixin:
                     nodes = Nodes([])
                     sender_uin = self._get_merge_sender_uin(event)
 
-                    if card_path and card_path.exists():
+                    if summary_text:
+                        nodes.nodes.append(
+                            Node(uin=sender_uin, content=[Plain(summary_text)])
+                        )
+                    elif card_path and card_path.exists():
                         card_component = Image.fromFileSystem(str(card_path.resolve()))
                         nodes.nodes.append(
                             Node(uin=sender_uin, content=[card_component])

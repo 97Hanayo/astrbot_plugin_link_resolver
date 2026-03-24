@@ -40,6 +40,8 @@ from .core.xiaohongshu.handler import XiaohongshuMixin
 
 # region 运行时常量
 TASK_NAME_PREFIX = "link-resolver-parse"
+SUMMARY_MODE_TEXT = "文字摘要"
+SUMMARY_MODE_CARD = "渲染卡片"
 # endregion
 
 
@@ -86,6 +88,12 @@ class LinkResolverPlugin(
             if val is None:
                 return default
         return val
+
+    def _read_summary_mode(self, key: str) -> str:
+        mode = str(self._get_config_value(key, SUMMARY_MODE_TEXT)).strip()
+        if mode not in (SUMMARY_MODE_TEXT, SUMMARY_MODE_CARD):
+            return SUMMARY_MODE_TEXT
+        return mode
 
     def _refresh_config(self) -> None:
         self._configure_managed_fonts()
@@ -138,6 +146,8 @@ class LinkResolverPlugin(
         self.bili_merge_send = bool(
             self._get_config_value("bili_settings.merge_send", False)
         )
+        self.bili_summary_mode = self._read_summary_mode("bili_settings.summary_mode")
+        self.bili_render_card = self.bili_summary_mode == SUMMARY_MODE_CARD
         self.enable_multi_page = bool(
             self._get_config_value("bili_settings.enable_multi_page", True)
         )
@@ -178,6 +188,10 @@ class LinkResolverPlugin(
         self.douyin_merge_send = bool(
             self._get_config_value("douyin_settings.merge_send", False)
         )
+        self.douyin_summary_mode = self._read_summary_mode(
+            "douyin_settings.summary_mode"
+        )
+        self.douyin_render_card = self.douyin_summary_mode == SUMMARY_MODE_CARD
 
         # 微博配置
         self.weibo_max_media = max(
@@ -203,6 +217,8 @@ class LinkResolverPlugin(
         self.xhs_merge_send = bool(
             self._get_config_value("xhs_settings.merge_send", False)
         )
+        self.xhs_summary_mode = self._read_summary_mode("xhs_settings.summary_mode")
+        self.xhs_render_card = self.xhs_summary_mode == SUMMARY_MODE_CARD
         self.xhs_download_original = bool(
             self._get_config_value("xhs_settings.download_original", True)
         )
@@ -293,13 +309,16 @@ class LinkResolverPlugin(
             else "关闭"
         )
         logger.info(
-            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,时长<=%s), 抖音(合并=%s), 小红书(原图=%s,大图转文件=%s), 微博(原图=%s,合并=%s,Cookie=%s), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
+            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,摘要=%s,时长<=%s), 抖音(合并=%s,摘要=%s), 小红书(原图=%s,摘要=%s,大图转文件=%s), 微博(原图=%s,合并=%s,Cookie=%s), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
             "/".join(enabled_list) if enabled_list else "无",
             self.video_quality.name,
             "开" if self.bili_merge_send else "关",
+            "卡片" if self.bili_render_card else "文字",
             duration_label,
             "开" if self.douyin_merge_send else "关",
+            "卡片" if self.douyin_render_card else "文字",
             "开" if self.xhs_download_original else "关",
+            "卡片" if self.xhs_render_card else "文字",
             xhs_image_limit_label,
             "开" if self.weibo_download_original else "关",
             "开" if self.weibo_merge_send else "关",

@@ -47,6 +47,16 @@
                 "hint": "开启后将 B 站视频信息和视频合并转发发送（多P默认合并）。不开启只发送单独视频; 视频合并转发总是会有点bug, 推荐单独发送",
                 "default": false
             },
+            "summary_mode": {
+                "description": "B站摘要模式",
+                "type": "string",
+                "hint": "决定合并发送时摘要节点使用纯文字还是渲染卡片。文字摘要只替换卡片节点，不改变媒体发送方式。",
+                "default": "文字摘要",
+                "options": [
+                    "文字摘要",
+                    "渲染卡片"
+                ]
+            },
             "enable_multi_page": {
                 "description": "B站多P视频处理",
                 "type": "bool",
@@ -92,8 +102,18 @@
             "merge_send": {
                 "description": "抖音视频合并发送",
                 "type": "bool",
-                "hint": "仅对视频生效。开启时发送卡片+视频的合并转发；关闭时只发送单独视频。图文笔记始终使用合并转发（卡片+图片）。",
+                "hint": "仅对视频生效。开启时发送摘要+视频的合并转发；关闭时只发送单独视频。图文笔记始终使用合并转发。",
                 "default": false
+            },
+            "summary_mode": {
+                "description": "抖音摘要模式",
+                "type": "string",
+                "hint": "决定合并发送时摘要节点使用纯文字还是渲染卡片。文字摘要只替换卡片节点，不改变媒体发送方式。",
+                "default": "文字摘要",
+                "options": [
+                    "文字摘要",
+                    "渲染卡片"
+                ]
             }
         }
     },
@@ -144,8 +164,18 @@
             "merge_send": {
                 "description": "小红书视频合并发送",
                 "type": "bool",
-                "hint": "仅对视频笔记生效。开启时发送卡片+视频的合并转发；关闭时只发送单独视频。图文笔记始终使用合并转发（卡片+图片）。",
+                "hint": "仅对视频笔记生效。开启时发送摘要+视频的合并转发；关闭时只发送单独视频。图文笔记始终使用合并转发。",
                 "default": false
+            },
+            "summary_mode": {
+                "description": "小红书摘要模式",
+                "type": "string",
+                "hint": "决定摘要节点使用纯文字还是渲染卡片。文字摘要只替换卡片节点，不改变图文合并转发、逐条发送或视频发送方式。",
+                "default": "文字摘要",
+                "options": [
+                    "文字摘要",
+                    "渲染卡片"
+                ]
             },
             "download_original": {
                 "description": "下载小红书原图",
@@ -156,7 +186,7 @@
             "prefer_ci_png": {
                 "description": "小红书优先CI-PNG转码",
                 "type": "bool",
-                "hint": "开启后优先通过腾讯云CI将图片转码为PNG格式(体积约为原图2倍 - 只是 JPEG 转码为 PNG, 不会有画质的提升, 并且部分图片可能转码失败回退到CDN原图)。",
+                "hint": "开启后优先通过腾讯云CI将图片转码为PNG格式(只是 JPEG 转码为 PNG, 不会有画质的提升, 并且部分图片可能转码失败回退到CDN原图)。",
                 "default": true
             },
             "auto_unmerge_threshold_mb": {
