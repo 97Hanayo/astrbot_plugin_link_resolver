@@ -73,8 +73,8 @@ class LinkResolverPlugin(
         self.user_emoji_font_ready = False
         self.managed_primary_font_ready = False
         self.managed_emoji_font_ready = False
+        self.xhs_renderer: XiaohongshuCardRenderer | None = None
         self._refresh_config()
-        self.xhs_renderer = XiaohongshuCardRenderer()
 
     # region 配置
     def _get_config_value(self, key: str, default):
@@ -223,7 +223,7 @@ class LinkResolverPlugin(
             self._get_config_value("xhs_settings.download_original", True)
         )
         self.xhs_prefer_ci_png = bool(
-            self._get_config_value("xhs_settings.prefer_ci_png", False)
+            self._get_config_value("xhs_settings.prefer_ci_png", True)
         )
         self.xhs_auto_unmerge_threshold_mb = int(
             self._get_config_value("xhs_settings.auto_unmerge_threshold_mb", 50)
@@ -345,6 +345,7 @@ class LinkResolverPlugin(
             self.group_filter_mode,
             len(self.group_filter_list),
         )
+        self.xhs_renderer = XiaohongshuCardRenderer(self.default_primary_font)
 
     # endregion
 

@@ -259,9 +259,7 @@ class WeiboMixin:
                 nodes.nodes.append(Node(uin=sender_uin, content=[merge_component]))
             await event.send(MessageChain([nodes]))
         else:
-            chain = [Plain(summary_text)] if summary_text else []
-            chain.append(media_components[0])
-            await event.send(MessageChain(chain))
+            await event.send(MessageChain([media_components[0]]))
 
         timing["send"] = time.perf_counter() - send_start
 

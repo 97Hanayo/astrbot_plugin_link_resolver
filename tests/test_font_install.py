@@ -138,6 +138,100 @@ class TestFontInstall(unittest.TestCase):
         )
         self.assertFalse(plugin.font_auto_install_enabled)
 
+    def test_refresh_config_defaults_xhs_prefer_ci_png_to_true(self):
+        plugin = LinkResolver.__new__(LinkResolver)
+        plugin.config = {}
+        plugin.font_auto_install_enabled = False
+        plugin.custom_primary_font_path = None
+        plugin.custom_emoji_font_path = None
+        plugin.xhs_renderer = object()
+        plugin.weibo_extractor = type(
+            "WeiboExtractorStub",
+            (),
+            {
+                "set_cookie": lambda self, cookie: None,
+                "has_user_cookie": lambda self: False,
+            },
+        )()
+        plugin._get_config_value = LinkResolver._get_config_value.__get__(
+            plugin, LinkResolver
+        )
+
+        with (
+            patch.object(plugin, "_configure_managed_fonts", lambda: None),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.get_user_font_paths",
+                return_value=ManagedFontPaths(primary=None, emoji=None),
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.get_managed_font_paths",
+                return_value=ManagedFontPaths(primary=None, emoji=None),
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.find_default_font",
+                return_value=None,
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.find_emoji_font",
+                return_value=None,
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCardRenderer"
+            ),
+        ):
+            LinkResolver._refresh_config(plugin)
+
+        self.assertTrue(plugin.xhs_prefer_ci_png)
+
+    def test_refresh_config_rebuilds_xhs_renderer_with_latest_font(self):
+        plugin = LinkResolver.__new__(LinkResolver)
+        plugin.config = {}
+        plugin.font_auto_install_enabled = False
+        plugin.custom_primary_font_path = None
+        plugin.custom_emoji_font_path = None
+        plugin.xhs_renderer = object()
+        plugin.weibo_extractor = type(
+            "WeiboExtractorStub",
+            (),
+            {
+                "set_cookie": lambda self, cookie: None,
+                "has_user_cookie": lambda self: False,
+            },
+        )()
+        plugin._get_config_value = LinkResolver._get_config_value.__get__(
+            plugin, LinkResolver
+        )
+        expected_font = Path("/tmp/latest-font.ttf")
+        new_renderer = object()
+
+        with (
+            patch.object(plugin, "_configure_managed_fonts", lambda: None),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.get_user_font_paths",
+                return_value=ManagedFontPaths(primary=None, emoji=None),
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.get_managed_font_paths",
+                return_value=ManagedFontPaths(primary=None, emoji=None),
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.find_default_font",
+                return_value=expected_font,
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.find_emoji_font",
+                return_value=None,
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCardRenderer",
+                return_value=new_renderer,
+            ) as renderer_cls,
+        ):
+            LinkResolver._refresh_config(plugin)
+
+        renderer_cls.assert_called_once_with(expected_font)
+        self.assertIs(plugin.xhs_renderer, new_renderer)
+
     def test_install_managed_fonts_falls_back_to_next_source(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             primary_target = Path(tmpdir) / "NotoSansCJKsc-Regular.otf"

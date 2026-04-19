@@ -22,6 +22,7 @@ for candidate in Path(__file__).resolve().parents:
             sys.path.insert(0, root_path)
         break
 
+from astrbot.api.message_components import Video
 from data.plugins.astrbot_plugin_link_resolver.core.weibo import WeiboResult
 from data.plugins.astrbot_plugin_link_resolver.core.weibo.handler import WeiboMixin
 from data.plugins.astrbot_plugin_link_resolver.main import LinkResolver
@@ -158,6 +159,54 @@ class TestWeiboHandler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(event.sent), 1)
         nodes = event.sent[0].chain[0]
         self.assertEqual(len(nodes.nodes), 2)
+
+    async def test_process_weibo_non_merged_video_sends_only_video(self):
+        event = DummyEvent()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video_path = Path(tmpdir) / "demo.mp4"
+            video_path.write_bytes(b"video")
+
+            plugin = SimpleNamespace(
+                weibo_enabled=True,
+                weibo_merge_send=False,
+                weibo_max_media=99,
+                retry_count=0,
+                max_video_size_mb=200,
+                weibo_extractor=SimpleNamespace(
+                    parse=AsyncMock(
+                        return_value=WeiboResult(
+                            title="微博视频",
+                            author="博主丁",
+                            text="视频正文",
+                            image_urls=[],
+                            video_url="https://media.example.com/demo.mp4",
+                            cover_url=None,
+                            source_url="https://weibo.com/1234567890/AbCdEfGhI",
+                        )
+                    )
+                ),
+                _refresh_config=lambda: None,
+                _send_reaction_emoji=AsyncMock(),
+                _download_weibo_video=AsyncMock(return_value=video_path),
+                _download_weibo_image=AsyncMock(),
+                _prepare_component_for_merge_send=AsyncMock(),
+                _get_merge_sender_uin=lambda event: "10001",
+                cleanup_files=AsyncMock(),
+            )
+            plugin._build_weibo_summary = WeiboMixin._build_weibo_summary.__get__(
+                plugin, WeiboMixin
+            )
+
+            await WeiboMixin._process_weibo(
+                plugin, event, "https://weibo.com/1234567890/AbCdEfGhI"
+            )
+
+        plugin._prepare_component_for_merge_send.assert_not_awaited()
+        plugin.cleanup_files.assert_awaited_once()
+        self.assertEqual(len(event.sent), 1)
+        chain = event.sent[0].chain
+        self.assertEqual(len(chain), 1)
+        self.assertIsInstance(chain[0], Video)
 
 
 if __name__ == "__main__":
