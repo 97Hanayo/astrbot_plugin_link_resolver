@@ -3,7 +3,7 @@
 [![AstrBot Plugin](https://img.shields.io/badge/AstrBot-Plugin-blue?style=flat-square)](https://github.com/Soulter/AstrBot)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-green?style=flat-square)](LICENSE)
 
-支持监听群内 **B站** / **抖音** / **小红书** / **微博** 链接，自动解析并下载发送视频或图集内容。无需任何命令，发链接即可触发。
+支持监听群内 **B站** / **抖音** / **小红书** / **微博** / **X** 链接，自动解析并下载发送视频或图集内容。无需任何命令，发链接即可触发。
 
 ---
 
@@ -14,6 +14,7 @@
 - 📕 **小红书原图解析**：支持视频和图文笔记，可下载原图
 - 🚦 **群过滤(黑/白名单)**：按群号控制哪些群启用解析，私聊不受影响
 - 🐦 **微博解析**：支持单条微博正文、图片、视频，默认原图优先
+- 𝕏 **X 解析**：支持 `twitter.com` / `x.com` 推文图片和视频解析
 
 ---
 
@@ -26,7 +27,7 @@
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `enable_platforms` | 勾选要启用解析的平台 | B站, 抖音, 小红书, 微博 |
+| `enable_platforms` | 勾选要启用解析的平台 | B站, 抖音, 小红书, 微博, X |
 | `general_settings.retry_count` | 解析失败重试次数（所有平台共用） | 3 |
 | `general_settings.max_video_size_mb` | 最大视频大小限制 (MB)，超过则跳过下载或自动降画质 | 200 |
 | `general_settings.reaction_emoji_enabled` | 识别链接后是否发表情回应 | ✅ 开启 |
@@ -105,6 +106,13 @@
 | `xhs_settings.auto_unmerge_threshold_mb` | 图片总大小超过此值时停止合并转发 (MB) | 50 |
 | `xhs_settings.qq_image_size_limit_mb` | 单张图片超过此值时转为文件发送 (MB) | 30 |
 
+### X 设置
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `twitter_settings.max_media` | 单条推文最多发送媒体数 | 99 |
+| `twitter_settings.merge_send` | 单视频推文使用合并转发 | ❌ 关闭 |
+
 
 ---
 
@@ -114,6 +122,15 @@
 - `m.weibo.cn/detail/<mblogid>`
 - `m.weibo.cn/status/<mblogid>`
 - `weibo.cn/<mblogid>`
+- `twitter.com/<user>/status/<id>`
+- `x.com/<user>/status/<id>`
+
+### X 默认行为
+
+- 纯图片推文：始终合并转发，并带文字摘要
+- 单视频推文：按 `twitter_settings.merge_send` 决定是否合并转发
+- 多视频或图文混合推文：始终合并转发，避免非合并模式下丢媒体
+- v1 不做代理配置，也不做卡片渲染；如果 X 媒体拉取异常，先检查运行环境网络和 `clash`
 
 ---
 
@@ -128,6 +145,7 @@ astrbot_plugin_link_resolver/
 ├── core/                # 核心解析模块
 │   ├── bilibili/        # B站解析
 │   ├── douyin/          # 抖音解析
+│   ├── twitter/         # X/Twitter解析
 │   ├── weibo/           # 微博解析
 │   ├── xiaohongshu/     # 小红书解析
 │   └── common/          # 公共工具

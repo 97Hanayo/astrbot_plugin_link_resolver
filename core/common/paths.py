@@ -127,5 +127,18 @@ def get_weibo_image_path() -> Path:
     return _ensure_dir(get_weibo_cache() / "images")
 
 
+# Twitter/X 路径
+def get_twitter_cache() -> Path:
+    return _ensure_dir(get_cache_path() / "twitter")
+
+
+def get_twitter_video_path() -> Path:
+    return _ensure_dir(get_twitter_cache() / "videos")
+
+
+def get_twitter_image_path() -> Path:
+    return _ensure_dir(get_twitter_cache() / "images")
+
+
 # endregion
 # endregion

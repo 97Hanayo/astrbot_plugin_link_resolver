@@ -7,13 +7,15 @@
             "B站",
             "抖音",
             "小红书",
-            "微博"
+            "微博",
+            "X"
         ],
         "default": [
             "B站",
             "抖音",
             "小红书",
-            "微博"
+            "微博",
+            "X"
         ]
     },
     "bili_settings": {
@@ -146,6 +148,26 @@
                 "type": "string",
                 "hint": "可选。粘贴浏览器导出的 Cookie 字符串（k=v;...）。留空时插件会先尝试生成访客 Cookie 解析公开微博。",
                 "default": ""
+            }
+        }
+    },
+    "twitter_settings": {
+        "description": "X 设置",
+        "type": "object",
+        "items": {
+            "max_media": {
+                "description": "X 最多发送媒体数",
+                "type": "int",
+                "hint": "单条推文最多发送的图片和视频数量。",
+                "default": 99,
+                "min": 1,
+                "max": 99
+            },
+            "merge_send": {
+                "description": "X 单视频合并发送",
+                "type": "bool",
+                "hint": "仅对单视频推文生效。开启时发送摘要+视频的合并转发；关闭时只发送单独视频。图文、多视频、混合媒体推文始终合并转发。",
+                "default": false
             }
         }
     },
