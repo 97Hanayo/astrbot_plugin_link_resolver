@@ -176,6 +176,19 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         ).strip()
         self.error_notify_mode = _mode if _mode in ("静默", "脱敏", "报错") else "静默"
 
+        # 群过滤配置(黑/白名单)
+        _gf_mode = str(self._get_config_value("group_filter.mode", "黑名单")).strip()
+        self.group_filter_mode = (
+            _gf_mode if _gf_mode in ("黑名单", "白名单") else "黑名单"
+        )
+        _gf_list = self._get_config_value("group_filter.group_list", [])
+        if isinstance(_gf_list, list):
+            self.group_filter_list = [
+                str(item).strip() for item in _gf_list if str(item).strip()
+            ]
+        else:
+            self.group_filter_list = []
+
         alias = self._normalize_quality_alias(self.quality_label)
         if alias == "HDR":
             self.allow_hdr = True
@@ -209,6 +222,11 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
             "开" if self.xhs_download_original else "关",
             xhs_image_limit_label,
             self.retry_count,
+        )
+        logger.info(
+            "🚦 群过滤: 模式=%s, 数量=%d",
+            self.group_filter_mode,
+            len(self.group_filter_list),
         )
 
     # endregion
@@ -492,6 +510,23 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
 
         return False
 
+    def _is_group_allowed(self, event: AstrMessageEvent) -> bool:
+        """根据群过滤(黑/白名单)判断当前群是否允许解析。
+
+        私聊不受过滤限制,始终返回 True。
+        """
+        group_id = event.get_group_id()
+        if not group_id:
+            return True
+        gid = str(group_id)
+        if self.group_filter_mode == "白名单":
+            allowed = gid in self.group_filter_list
+        else:
+            allowed = gid not in self.group_filter_list
+        if not allowed:
+            logger.debug("🚫 群 %s 被%s拦截,跳过解析", gid, self.group_filter_mode)
+        return allowed
+
     # endregion
 
     # region 表情回应
@@ -771,12 +806,16 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
     async def handle_bili_video(self, event: AstrMessageEvent):
         if self._has_json_component(event):
             return
+        if not self._is_group_allowed(event):
+            return
         self._register_parse_task("bili", event)
         await BilibiliMixin.handle_bili_video(self, event)
 
     @filter.regex(DOUYIN_MESSAGE_PATTERN, priority=10)
     async def handle_douyin(self, event: AstrMessageEvent):
         if self._has_json_component(event):
+            return
+        if not self._is_group_allowed(event):
             return
         self._register_parse_task("douyin", event)
         await DouyinMixin.handle_douyin(self, event)
@@ -785,6 +824,8 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
     async def handle_xhs(self, event: AstrMessageEvent):
         if self._has_json_component(event):
             return
+        if not self._is_group_allowed(event):
+            return
         self._register_parse_task("xhs", event)
         async for result in XiaohongshuMixin.handle_xhs(self, event):
             yield result
@@ -792,6 +833,8 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
     @filter.regex(r".*")
     async def handle_json_card(self, event: AstrMessageEvent):
         if self._is_self_message(event):
+            return
+        if not self._is_group_allowed(event):
             return
 
         links: list[str] = []
