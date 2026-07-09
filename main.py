@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import time
+from random import choice
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -163,6 +164,22 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         )
         self.reaction_emoji_id = self._coerce_positive_int(
             self._get_config_value("general_settings.reaction_emoji_id", 128169), 128169
+        )
+        _raw_list = self._get_config_value("general_settings.reaction_emoji_list", None)
+        _emoji_list: list[int] = []
+        if isinstance(_raw_list, list):
+            for item in _raw_list[:5]:
+                coerced = self._coerce_positive_int(item, 0)
+                if coerced > 0:
+                    _emoji_list.append(coerced)
+        if not _emoji_list and self.reaction_emoji_id > 0:
+            _emoji_list = [self.reaction_emoji_id]
+        self.reaction_emoji_list = _emoji_list
+        _strategy = str(
+            self._get_config_value("general_settings.reaction_emoji_strategy", "随机")
+        ).strip()
+        self.reaction_emoji_strategy = (
+            _strategy if _strategy in ("随机", "顺序循环") else "随机"
         )
         self.reaction_emoji_type = "1"  # 固定值，无需配置
         self.max_video_size_mb = int(
@@ -554,6 +571,9 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
     ) -> None:
         if not self.reaction_emoji_enabled:
             return
+        if not self.reaction_emoji_list:
+            logger.debug("表情回应跳过%s: 列表为空", source_tag)
+            return
         if not event.get_group_id():
             logger.debug("表情回应跳过%s: 非群消息", source_tag)
             return
@@ -565,15 +585,24 @@ class LinkResolver(BilibiliMixin, DouyinMixin, XiaohongshuMixin, Star):
         if message_id is None:
             logger.debug("表情回应跳过%s: 无法获取 message_id", source_tag)
             return
-        try:
-            await bot.set_msg_emoji_like(
-                message_id=message_id,
-                emoji_id=self.reaction_emoji_id,
-                emoji_type=self.reaction_emoji_type,
-                set=True,
-            )
-        except Exception as exc:
-            logger.warning("⚠️ 表情回应失败%s: %s", source_tag, str(exc))
+        if self.reaction_emoji_strategy == "顺序循环":
+            emoji_ids = list(self.reaction_emoji_list)
+        else:
+            emoji_ids = [choice(self.reaction_emoji_list)]
+        for emoji_id in emoji_ids:
+            try:
+                await bot.set_msg_emoji_like(
+                    message_id=message_id,
+                    emoji_id=emoji_id,
+                    emoji_type=self.reaction_emoji_type,
+                    set=True,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "⚠️ 表情回应失败%s: emoji_id=%s, %s", source_tag, emoji_id, str(exc)
+                )
+            if len(emoji_ids) > 1:
+                await asyncio.sleep(0.5)
 
     # endregion
 

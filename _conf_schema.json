@@ -166,10 +166,28 @@
                 "default": true
             },
             "reaction_emoji_id": {
-                "description": "回应表情ID",
+                "description": "回应表情ID(旧字段,兼容用)",
                 "type": "int",
-                "hint": "调用 set_msg_emoji_like 的 emoji_id，粑粑是128169, OK是124。",
+                "hint": "调用 set_msg_emoji_like 的 emoji_id,粑粑是128169, OK是124。仅当 reaction_emoji_list 为空时生效,推荐用新字段 reaction_emoji_list。",
                 "default": 128169
+            },
+            "reaction_emoji_list": {
+                "description": "回应表情ID列表(0~5个)",
+                "type": "list",
+                "hint": "QQ emoji_id,空列表=不回应,最多5个。常用:棒棒糖=147 OK=124 赞=76 爱心=66。完整列表: https://bot.q.qq.com/wiki/develop/api-v2/openapi/emoji/model.html",
+                "default": [
+                    147
+                ]
+            },
+            "reaction_emoji_strategy": {
+                "description": "回应策略",
+                "type": "string",
+                "hint": "随机:每次从列表抽1个。顺序循环:按列表依次全部回应,每个间隔0.5s(同一消息多表情)。",
+                "default": "随机",
+                "options": [
+                    "随机",
+                    "顺序循环"
+                ]
             },
             "max_video_size_mb": {
                 "description": "最大视频大小 (MB)",
