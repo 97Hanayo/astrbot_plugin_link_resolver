@@ -12,7 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import httpx
 
@@ -80,15 +80,34 @@ class TestFontInstall(unittest.TestCase):
         install_mock.assert_not_called()
         self.assertFalse(plugin.font_auto_install_enabled)
 
-    def test_configure_managed_fonts_enabled_installs(self):
+    def test_initialize_installs_managed_fonts_off_event_loop(self):
+        plugin = LinkResolver.__new__(LinkResolver)
+        plugin.font_auto_install_enabled = True
+        plugin._refresh_config = Mock()
+        expected = ManagedFontPaths(
+            primary=Path("/tmp/NotoSansCJKsc-Regular.otf"),
+            emoji=Path("/tmp/OpenMoji-black-glyf.ttf"),
+        )
+
+        with patch(
+            "data.plugins.astrbot_plugin_link_resolver.main.install_managed_fonts",
+            return_value=expected,
+        ) as install_mock:
+            import asyncio
+
+            asyncio.run(LinkResolver.initialize(plugin))
+
+        install_mock.assert_called_once()
+        self.assertTrue(plugin.font_auto_install_enabled)
+        self.assertTrue(plugin.managed_primary_font_ready)
+        self.assertTrue(plugin.managed_emoji_font_ready)
+        plugin._refresh_config.assert_called_once_with()
+
+    def test_configure_managed_fonts_enabled_defers_install_to_initialize(self):
         plugin = LinkResolver.__new__(LinkResolver)
         plugin.config = {"general_settings": {"auto_install_fonts": True}}
         plugin._get_config_value = LinkResolver._get_config_value.__get__(
             plugin, LinkResolver
-        )
-        expected = ManagedFontPaths(
-            primary=Path("/tmp/NotoSansCJKsc-Regular.otf"),
-            emoji=Path("/tmp/OpenMoji-black-glyf.ttf"),
         )
 
         with (
@@ -97,16 +116,13 @@ class TestFontInstall(unittest.TestCase):
             ) as set_enabled,
             patch(
                 "data.plugins.astrbot_plugin_link_resolver.main.install_managed_fonts",
-                return_value=expected,
             ) as install_mock,
         ):
             LinkResolver._configure_managed_fonts(plugin)
 
         set_enabled.assert_called_once_with(True)
-        install_mock.assert_called_once()
+        install_mock.assert_not_called()
         self.assertTrue(plugin.font_auto_install_enabled)
-        self.assertTrue(plugin.managed_primary_font_ready)
-        self.assertTrue(plugin.managed_emoji_font_ready)
 
     def test_configure_managed_fonts_sets_custom_paths(self):
         plugin = LinkResolver.__new__(LinkResolver)
@@ -231,6 +247,54 @@ class TestFontInstall(unittest.TestCase):
 
         renderer_cls.assert_called_once_with(expected_font)
         self.assertIs(plugin.xhs_renderer, new_renderer)
+
+    def test_refresh_config_preserves_explicit_empty_reaction_emoji_list(self):
+        plugin = LinkResolver.__new__(LinkResolver)
+        plugin.config = {
+            "general_settings": {
+                "reaction_emoji_list": [],
+            }
+        }
+        plugin.font_auto_install_enabled = False
+        plugin.custom_primary_font_path = None
+        plugin.custom_emoji_font_path = None
+        plugin.weibo_extractor = type(
+            "WeiboExtractorStub",
+            (),
+            {
+                "set_cookie": lambda self, cookie: None,
+                "has_user_cookie": lambda self: False,
+            },
+        )()
+        plugin._get_config_value = LinkResolver._get_config_value.__get__(
+            plugin, LinkResolver
+        )
+
+        with (
+            patch.object(plugin, "_configure_managed_fonts", lambda: None),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.get_user_font_paths",
+                return_value=ManagedFontPaths(primary=None, emoji=None),
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.get_managed_font_paths",
+                return_value=ManagedFontPaths(primary=None, emoji=None),
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.find_default_font",
+                return_value=None,
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.find_emoji_font",
+                return_value=None,
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCardRenderer"
+            ),
+        ):
+            LinkResolver._refresh_config(plugin)
+
+        self.assertEqual(plugin.reaction_emoji_list, [])
 
     def test_install_managed_fonts_falls_back_to_next_source(self):
         with tempfile.TemporaryDirectory() as tmpdir:

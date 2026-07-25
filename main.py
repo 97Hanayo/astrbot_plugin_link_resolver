@@ -4,8 +4,8 @@ import hashlib
 import json
 import re
 import time
-from random import choice
 from pathlib import Path
+from random import choice
 from urllib.parse import urlparse
 
 import httpx
@@ -77,6 +77,16 @@ class LinkResolverPlugin(
         self.managed_primary_font_ready = False
         self.managed_emoji_font_ready = False
         self.xhs_renderer: XiaohongshuCardRenderer | None = None
+        self._refresh_config()
+
+    async def initialize(self) -> None:
+        """在后台线程安装可选字体, 避免阻塞 AstrBot 的事件循环."""
+        if not self.font_auto_install_enabled:
+            return
+
+        managed_paths = await asyncio.to_thread(install_managed_fonts)
+        self.managed_primary_font_ready = managed_paths.primary is not None
+        self.managed_emoji_font_ready = managed_paths.emoji is not None
         self._refresh_config()
 
     # region 配置
@@ -382,11 +392,6 @@ class LinkResolverPlugin(
         if not self.font_auto_install_enabled:
             self.managed_primary_font_ready = False
             self.managed_emoji_font_ready = False
-            return
-
-        managed_paths = install_managed_fonts()
-        self.managed_primary_font_ready = managed_paths.primary is not None
-        self.managed_emoji_font_ready = managed_paths.emoji is not None
 
     # region 解析任务管理
     def _register_parse_task(

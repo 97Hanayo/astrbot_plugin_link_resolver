@@ -170,6 +170,50 @@ class TestTwitterHandler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(chain), 1)
         self.assertIsInstance(chain[0], Video)
 
+    async def test_process_twitter_cleans_download_when_send_fails(self):
+        event = DummyEvent()
+        event.send = AsyncMock(side_effect=RuntimeError("send failed"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video_path = Path(tmpdir) / "demo.mp4"
+            video_path.write_bytes(b"video")
+            plugin = SimpleNamespace(
+                twitter_enabled=True,
+                twitter_merge_send=False,
+                twitter_max_media=99,
+                retry_count=0,
+                max_video_size_mb=200,
+                twitter_extractor=SimpleNamespace(
+                    parse=AsyncMock(
+                        return_value=TwitterResult(
+                            text="视频正文",
+                            author="Bob(@bob)",
+                            created_at="2025-05-02",
+                            image_urls=[],
+                            video_urls=["https://video.twimg.com/demo.mp4"],
+                            source_url="https://x.com/bob/status/1234567890123456789",
+                            tweet_id="1234567890123456789",
+                        )
+                    )
+                ),
+                _refresh_config=lambda: None,
+                _send_reaction_emoji=AsyncMock(),
+                _download_twitter_video=AsyncMock(return_value=video_path),
+                _download_twitter_image=AsyncMock(),
+                _prepare_component_for_merge_send=AsyncMock(),
+                _get_merge_sender_uin=lambda event: "10001",
+                cleanup_files=AsyncMock(),
+            )
+            plugin._build_twitter_summary = TwitterMixin._build_twitter_summary.__get__(
+                plugin, TwitterMixin
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "send failed"):
+                await TwitterMixin._process_twitter(
+                    plugin, event, "https://x.com/bob/status/1234567890123456789"
+                )
+
+        plugin.cleanup_files.assert_awaited_once_with([video_path], [])
+
     async def test_process_twitter_single_video_merged_sends_summary_plus_video(self):
         event = DummyEvent()
         with tempfile.TemporaryDirectory() as tmpdir:
