@@ -10,15 +10,15 @@ from PIL import ImageFont
 
 # region 字体查找
 def find_default_font() -> Path | None:
-    """查找可用的中文字体
+    """查找可用的中文字体，跨发行版兼容。
 
     优先级:
-    1. astrbot_plugin_parser 插件的字体
-    2. Linux 系统常用中文字体
+    1. astrbot_plugin_parser 插件内置的字体
+    2. 常见中文字体路径（覆盖 Ubuntu/Debian/CentOS/Arch/macOS）
+    3. fc-match :lang=zh 兜底（依赖 fontconfig，几乎所有桌面 Linux 默认装）
     """
     plugin_root = Path(__file__).resolve().parents[4]
 
-    # 优先尝试 astrbot_plugin_parser 里的字体
     parser_resources = (
         plugin_root
         / "astrbot_plugin_parser"
@@ -29,16 +29,45 @@ def find_default_font() -> Path | None:
     if parser_resources.exists():
         return parser_resources
 
-    # 备选：尝试 Linux 系统常用中文字体
     system_fonts = [
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+        "/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/source-han-sans/SourceHanSansSC-Regular.otf",
+        "/usr/share/fonts/opentype/source-han-sans/SourceHanSansCN-Regular.otf",
+        "/usr/share/fonts/truetype/arphic/uming.ttc",
+        "/usr/share/fonts/truetype/arphic/ukai.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/Library/Fonts/Songti.ttc",
+        str(Path.home() / ".fonts/wqy-microhei.ttc"),
+        str(Path.home() / ".fonts/wqy-zenhei.ttc"),
+        str(Path.home() / ".local/share/fonts/wqy-microhei.ttc"),
+        str(Path.home() / ".local/share/fonts/wqy-zenhei.ttc"),
     ]
     for font in system_fonts:
         if Path(font).exists():
             return Path(font)
+
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["fc-match", "-f", "%{file}", ":lang=zh"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            candidate = Path(result.stdout.strip())
+            if candidate.exists():
+                return candidate
+    except Exception:
+        pass
 
     return None
 
@@ -47,7 +76,9 @@ def find_default_font() -> Path | None:
 
 
 # region 字体加载
-def load_font(font_path: Path | None, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+def load_font(
+    font_path: Path | None, size: int
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """加载字体，如果路径不存在则使用默认字体"""
     if font_path and font_path.exists():
         return ImageFont.truetype(str(font_path), size)
