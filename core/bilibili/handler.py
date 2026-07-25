@@ -158,6 +158,10 @@ class BilibiliMixin:
         if not candidates:
             fallback = "_720P"
             return fallback, getattr(VideoQuality, fallback)
+        candidates = [q for q in candidates if q.value is not None]
+        if not candidates:
+            fallback = "_720P"
+            return fallback, getattr(VideoQuality, fallback)
         best = max(candidates, key=lambda item: item.value)
         return best.name, best
 
@@ -173,10 +177,18 @@ class BilibiliMixin:
         if not candidates:
             fallback = "_720P"
             return fallback, getattr(VideoQuality, fallback)
+        candidates = [q for q in candidates if q.value is not None]
+        if not candidates:
+            fallback = "_720P"
+            return fallback, getattr(VideoQuality, fallback)
         lowest = min(candidates, key=lambda item: item.value)
         return lowest.name, lowest
 
     def _get_lower_qualities(self, current_quality: VideoQuality) -> list[VideoQuality]:
+        current_value = getattr(current_quality, "value", None)
+        if current_value is None:
+            return []
+
         candidates: list[VideoQuality] = []
         for quality in VideoQuality:
             name = quality.name.upper()
@@ -184,7 +196,7 @@ class BilibiliMixin:
                 continue
             if not self.allow_dolby and "DOLBY" in name:
                 continue
-            if quality.value < current_quality.value:
+            if quality.value is not None and quality.value < current_value:
                 candidates.append(quality)
         return sorted(candidates, key=lambda q: q.value, reverse=True)
 
