@@ -513,6 +513,33 @@ class BilibiliMixin:
     # endregion
 
     # region B站视频处理
+    @staticmethod
+    def _normalize_bili_codecs_for_detector(download_url_data: dict) -> None:
+        """兼容 bilibili-api-python 17.4.1 无法识别 hvc1/hev1 的情况."""
+        try:
+            data = download_url_data.get("video_info") or download_url_data
+            dash = data.get("dash") if isinstance(data, dict) else None
+            videos = dash.get("video") if isinstance(dash, dict) else None
+            if not isinstance(videos, list):
+                return
+
+            fixed = 0
+            for item in videos:
+                if not isinstance(item, dict):
+                    continue
+                codecs = item.get("codecs")
+                if not isinstance(codecs, str):
+                    continue
+                normalized = codecs.lower()
+                if normalized.startswith(("hvc1", "hev1")):
+                    item["codecs"] = f"hev {codecs}"
+                    fixed += 1
+
+            if fixed:
+                logger.debug("🩹 已兼容 B站 HEVC 编码标签: fixed=%d", fixed)
+        except Exception as exc:
+            logger.debug("兼容 B站编码标签失败: %s", str(exc))
+
     async def _select_streams(
         self,
         video_obj: video.Video,
@@ -527,6 +554,7 @@ class BilibiliMixin:
         """
         target_quality = video_quality or self.video_quality
         download_url_data = await video_obj.get_download_url(page_index=page_index)
+        self._normalize_bili_codecs_for_detector(download_url_data)
         detecter = VideoDownloadURLDataDetecter(download_url_data)
         streams = detecter.detect_best_streams(
             video_max_quality=target_quality,
