@@ -1,9 +1,9 @@
 # 🔗 Link Resolver
 
-[![AstrBot Plugin](https://img.shields.io/badge/AstrBot-Plugin-blue?style=flat-square)](https://github.com/Soulter/AstrBot)
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-green?style=flat-square)](LICENSE)
+[![AstrBot Plugin](https://img.shields.io/badge/AstrBot-Plugin-blue?style=flat-square)](https://github.com/AstrBotDevs/AstrBot)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-green?style=flat-square)](LICENSE)
 
-支持监听群内 **B站** / **抖音** / **小红书** / **微博** / **X** 链接，自动解析并下载发送视频或图集内容。无需任何命令，发链接即可触发。
+支持监听聊天中的 **B站** / **抖音** / **小红书** / **微博** / **X** 链接，自动解析并发送视频或图集。无需命令，发送链接即可触发。
 
 ---
 
@@ -15,13 +15,29 @@
 - 🚦 **群过滤(黑/白名单)**：按群号控制哪些群启用解析，私聊不受影响
 - 🐦 **微博解析**：支持单条微博正文、图片、视频，默认原图优先
 - 𝕏 **X 解析**：支持 `twitter.com` / `x.com` 推文图片和视频解析
+- 🧾 **摘要模式**：B站、抖音和小红书支持文字摘要或渲染卡片
+- 🔤 **字体管理**：支持自定义字体，也可按需安装托管字体
+
+---
+
+## 安装与依赖
+
+推荐直接从 AstrBot 插件市场安装。插件需要的 Python 包会根据 `requirements.txt` 自动安装。
+
+B站音视频合并依赖系统中的 `ffmpeg`。安装后可在 AstrBot 的运行环境内执行下面的命令确认：
+
+```bash
+ffmpeg -version
+```
+
+插件配置和运行数据保存在 AstrBot 的 `data/plugin_data/astrbot_plugin_link_resolver/`，更新插件代码时不会被覆盖。
 
 ---
 
 ## ⚙️ 配置项
 在 AstrBot 管理面板的插件配置中可调整以下选项：
 
-`v1.0.11` 起支持按需自动安装插件字体；`v1.0.10` 起支持微博解析；`v1.0.9` 起配置面板改为按平台分组折叠。如果你是从旧版升级，建议重新检查一次配置值。
+配置面板按平台分组折叠。如果你是从旧版升级，建议重新检查一次配置值。
 
 ### 基础设置
 
@@ -33,7 +49,7 @@
 | `general_settings.reaction_emoji_enabled` | 识别链接后是否发表情回应 | ✅ 开启 |
 | `general_settings.reaction_emoji_list` | 回应表情 ID 列表(0~5个), 空=不回应 | `[127827]` |
 | `general_settings.reaction_emoji_strategy` | `随机` 抽1个 / `顺序循环` 全部依次回应(每个 0.5s) | `随机` |
-| `general_settings.auto_install_fonts` | 重载时自动安装插件字体到 `data/fonts` | ❌ 关闭 |
+| `general_settings.auto_install_fonts` | 重载时自动安装字体到插件数据目录 | ❌ 关闭 |
 | `general_settings.custom_font_path` | 自定义主字体文件绝对路径，优先级最高 | 空 |
 | `general_settings.custom_emoji_font_path` | 自定义 Emoji 字体文件绝对路径，优先级最高 | 空 |
 | `general_settings.merge_send_as_sender` | 合并转发显示为原发送者 | ❌ 关闭 |
@@ -71,6 +87,7 @@
 | `bili_settings.video_quality` | 默认下载画质 | `1080P高帧率` |
 | `bili_settings.allow_quality_fallback` | 超限时自动降画质 | ✅ 开启 |
 | `bili_settings.merge_send` | 合并转发发送（不开启则只发视频） | ❌ 关闭 |
+| `bili_settings.summary_mode` | 合并发送时使用 `文字摘要` 或 `渲染卡片` | `文字摘要` |
 | `bili_settings.enable_multi_page` | 启用多P视频下载 | ✅ 开启 |
 | `bili_settings.multi_page_max` | 多P最多下载数量 | 3 |
 | `bili_settings.max_duration_seconds` | 最大视频时长(秒)，超过即忽略 | 300 |
@@ -117,7 +134,11 @@
 ---
 
 ## 使用方法
-直接在群内发送包含以下链接的消息即可自动解析
+直接发送包含受支持链接的消息即可自动解析，例如：
+
+- `bilibili.com/video/BV...`、`b23.tv/...`、`bili2233.cn/...`
+- `douyin.com/video/...`、`douyin.com/note/...`、`v.douyin.com/...`
+- `xiaohongshu.com/explore/...`、`xiaohongshu.com/discovery/item/...`、`xhslink.com/...`
 - `weibo.com/<uid>/<mblogid>`
 - `m.weibo.cn/detail/<mblogid>`
 - `m.weibo.cn/status/<mblogid>`
@@ -130,8 +151,7 @@
 - 纯图片推文：始终合并转发，并带文字摘要
 - 单视频推文：按 `twitter_settings.merge_send` 决定是否合并转发
 - 多视频或图文混合推文：始终合并转发，避免非合并模式下丢媒体
-- v1 不做代理配置，也不做卡片渲染；如果 X 媒体拉取异常，先检查运行环境网络和 `clash`
-
+- 当前不提供代理配置
 ---
 
 ## 📁 目录结构
@@ -149,8 +169,12 @@ astrbot_plugin_link_resolver/
 │   ├── weibo/           # 微博解析
 │   ├── xiaohongshu/     # 小红书解析
 │   └── common/          # 公共工具
+└── tests/               # 测试
+
+data/plugin_data/astrbot_plugin_link_resolver/
 ├── cache/               # 媒体缓存目录
-└── cookies/             # Cookies 存放目录
+├── cookies/             # Cookies 存放目录
+└── fonts/               # 插件托管字体目录
 ```
 
 ---
@@ -172,7 +196,8 @@ astrbot_plugin_link_resolver/
 
 ### 方式二：手动放置文件
 
-将 Cookie 内容保存到 `cookies/bili_cookies.txt`（插件会自动创建目录）
+将 Cookie 内容保存到 AstrBot 数据目录下的
+`data/plugin_data/astrbot_plugin_link_resolver/cookies/bili_cookies.txt`。插件会自动创建目录。
 
 ### 微博 Cookie（可选）
 
@@ -190,7 +215,7 @@ SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 卡片渲染现在支持三层优先级：
 
 1. 自定义字体路径
-2. 插件自动安装到 `data/fonts` 的字体
+2. 插件自动安装到插件数据目录 `fonts/` 的字体
 3. 系统已有字体 / 现有依赖字体
 
 如果你有合适的字体文件，在配置里填写下面两个路径即可，优先级最高：
@@ -205,11 +230,11 @@ SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 - 插件会在加载重载时自动下载并安装：
   - 中文主字体：`NotoSansCJKsc-Regular.otf`
   - Emoji 字体：`OpenMoji-black-glyf.ttf`
-- 安装目录：插件数据目录下的 `data/fonts`
+- 安装目录：`data/plugin_data/astrbot_plugin_link_resolver/fonts/`
   - 优先尝试国内更容易连通的镜像源; 失败后使用 GitHub 原始地址
   - 如果全部失败，只是回退到系统现有字体
 
-也可以手动把下面两个文件放进 `data/fonts`：
+也可以手动把下面两个文件放进该 `fonts/` 目录：
 ```text
 NotoSansCJKsc-Regular.otf
 OpenMoji-black-glyf.ttf
@@ -224,7 +249,7 @@ OpenMoji-black-glyf.ttf
 
 ## 📄 许可证
 
-本项目采用 [GPL-3.0](LICENSE) 许可证。
+本项目采用 [AGPL-3.0](LICENSE) 许可证。
 
 ---
 

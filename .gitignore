@@ -1,6 +1,9 @@
 # Python 编译缓存
 __pycache__/
 *.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
 
 # 插件数据目录
 cache/
@@ -9,6 +12,7 @@ cookies/
 # 临时文件
 *.log
 *.tmp
+*.zip
 .DS_Store
 
 # IDE 配置
@@ -20,4 +24,3 @@ cookies/
 *.jpg
 *.png
 !docs/images/*.png
-
