@@ -266,6 +266,14 @@ class LinkResolverPlugin(
         self.xhs_comment_screenshot_max = max(
             0, int(self._get_config_value("xhs_settings.comment_screenshot_max", 20))
         )
+        self.xhs_comment_reply_screenshot_max = max(
+            0,
+            int(
+                self._get_config_value(
+                    "xhs_settings.comment_reply_screenshot_max", 5
+                )
+            ),
+        )
         _xhs_comment_mode = str(
             self._get_config_value("xhs_settings.comment_screenshot_mode", COMMENT_MODE_WEB)
         ).strip()
@@ -348,7 +356,7 @@ class LinkResolverPlugin(
             else "关闭"
         )
         logger.info(
-            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,摘要=%s,时长<=%s), 抖音(合并=%s,摘要=%s), 小红书(原图=%s,摘要=%s,大图转文件=%s,评论截图=%s/%s/%d条,Cookie=%s), 微博(原图=%s,合并=%s,Cookie=%s), X(合并=%s,最多=%d), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
+            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,摘要=%s,时长<=%s), 抖音(合并=%s,摘要=%s), 小红书(原图=%s,摘要=%s,大图转文件=%s,评论截图=%s/%s/%d条,楼中楼=%d条,Cookie=%s), 微博(原图=%s,合并=%s,Cookie=%s), X(合并=%s,最多=%d), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
             "/".join(enabled_list) if enabled_list else "无",
             self.video_quality.name,
             "开" if self.bili_merge_send else "关",
@@ -362,6 +370,7 @@ class LinkResolverPlugin(
             "开" if self.xhs_enable_comment_screenshot else "关",
             self.xhs_comment_screenshot_mode,
             self.xhs_comment_screenshot_max,
+            self.xhs_comment_reply_screenshot_max,
             "开" if self.xhs_cookies else "关",
             "开" if self.weibo_download_original else "关",
             "开" if self.weibo_merge_send else "关",

@@ -19,8 +19,9 @@ XHS_COMMENT_MODES = (COMMENT_MODE_WEB, COMMENT_MODE_DRAW)
 _XHS_COOKIE_DOMAIN = "xiaohongshu.com"
 _COMMENT_SELECTORS = (
     ".comments-el .parent-comment",
-    ".comments-el .comment-item",
+    ".comment-list .parent-comment",
     ".comment-list .comment-item",
+    ".comments-el .comment-item",
     "[class*='parent-comment']",
     "[class*='comment-item']",
 )
@@ -114,6 +115,7 @@ class XiaohongshuCommentScreenshotter:
         output_dir: Path,
         request_id: str,
         max_comments: int = 20,
+        max_replies_per_comment: int = 5,
         mode: str = COMMENT_MODE_WEB,
         cookies_text: str = "",
     ) -> list[Path]:
@@ -125,6 +127,7 @@ class XiaohongshuCommentScreenshotter:
 
         output_dir.mkdir(parents=True, exist_ok=True)
         max_comments = max(0, int(max_comments))
+        max_replies_per_comment = max(0, int(max_replies_per_comment))
         mode = mode if mode in XHS_COMMENT_MODES else COMMENT_MODE_WEB
         url = _normalize_xhs_url(source_url, note_id)
         cookies = parse_xhs_cookies(cookies_text)
@@ -155,6 +158,12 @@ class XiaohongshuCommentScreenshotter:
                     if count <= 0:
                         logger.info("🍠 小红书评论截图: 未找到可见评论")
                         return []
+                    await self._prepare_nested_replies(
+                        page,
+                        locator,
+                        count,
+                        max_replies_per_comment,
+                    )
                     if mode == COMMENT_MODE_DRAW:
                         items = await self._extract_comment_items(locator, count)
                         return await asyncio.to_thread(
@@ -163,7 +172,9 @@ class XiaohongshuCommentScreenshotter:
                             output_dir,
                             request_id,
                         )
-                    return await self._capture_web_comments(locator, count, output_dir, request_id)
+                    return await self._capture_web_comments(
+                        locator, count, output_dir, request_id
+                    )
                 finally:
                     await context.close()
             finally:
@@ -216,11 +227,114 @@ class XiaohongshuCommentScreenshotter:
         return locator
 
     async def _pick_comment_locator(self, page):
+        await self._mark_top_level_comments(page)
+        marked = page.locator("[data-xhs-top-comment='1']")
+        if await marked.count() > 0:
+            return marked
         for selector in _COMMENT_SELECTORS:
             locator = page.locator(selector)
             if await locator.count() > 0:
                 return locator
         return page.locator(_COMMENT_SELECTORS[-1])
+
+    async def _mark_top_level_comments(self, page) -> None:
+        await page.evaluate(
+            """
+            () => {
+              document
+                .querySelectorAll('[data-xhs-top-comment]')
+                .forEach((el) => el.removeAttribute('data-xhs-top-comment'));
+              let candidates = Array.from(
+                document.querySelectorAll(
+                  '.comments-el .parent-comment, .comment-list .parent-comment, [class*=parent-comment]'
+                )
+              );
+              if (!candidates.length) {
+                const rawCandidates = Array.from(
+                  document.querySelectorAll('.comments-el .comment-item, .comment-list .comment-item')
+                );
+                candidates = rawCandidates.filter((el) => {
+                  const cls = String(el.className || '').toLowerCase();
+                  if (cls.includes('reply') || cls.includes('sub-comment') || cls.includes('child-comment')) {
+                    return false;
+                  }
+                  return !rawCandidates.some((other) => other !== el && other.contains(el));
+                });
+              }
+              candidates.forEach((el) => el.setAttribute('data-xhs-top-comment', '1'));
+            }
+            """
+        )
+
+    async def _prepare_nested_replies(
+        self,
+        page,
+        locator,
+        count: int,
+        max_replies_per_comment: int,
+    ) -> None:
+        for index in range(count):
+            item = locator.nth(index)
+            await item.scroll_into_view_if_needed(timeout=5000)
+            handle = await item.element_handle(timeout=5000)
+            if handle is None:
+                continue
+            for _ in range(8):
+                clicked = await page.evaluate(
+                    """
+                    (root) => {
+                      const clickable = Array.from(
+                        root.querySelectorAll('button, a, span, div')
+                      ).find((el) => {
+                        const text = (el.innerText || el.textContent || '').trim();
+                        if (!text) return false;
+                        if (!/(展开|更多|查看|回复)/.test(text)) return false;
+                        const style = window.getComputedStyle(el);
+                        if (style.display === 'none' || style.visibility === 'hidden') return false;
+                        const rect = el.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0;
+                      });
+                      if (!clickable) return false;
+                      clickable.click();
+                      return true;
+                    }
+                    """,
+                    handle,
+                )
+                if not clicked:
+                    break
+                await page.wait_for_timeout(450)
+            await handle.evaluate(
+                """
+                (root, maxReplies) => {
+                  const candidates = Array.from(
+                    root.querySelectorAll(
+                      '[class*=reply], [class*=sub-comment], [class*=child-comment], [class*=comment-item]'
+                    )
+                  ).filter((el) => {
+                    if (el === root) return false;
+                    const cls = String(el.className || '').toLowerCase();
+                    return (
+                      cls.includes('reply') ||
+                      cls.includes('sub-comment') ||
+                      cls.includes('child-comment')
+                    );
+                  });
+                  const leafReplies = candidates.filter((el) => {
+                    const nested = candidates.some((other) => other !== el && el.contains(other));
+                    const text = (el.innerText || el.textContent || '').trim();
+                    return !nested && text;
+                  });
+                  leafReplies.forEach((el, i) => {
+                    if (maxReplies > 0 && i >= maxReplies) {
+                      el.setAttribute('data-xhs-hidden-reply', '1');
+                      el.style.display = 'none';
+                    }
+                  });
+                }
+                """,
+                max_replies_per_comment,
+            )
 
     async def _capture_web_comments(
         self,

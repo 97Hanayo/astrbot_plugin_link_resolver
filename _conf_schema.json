@@ -245,6 +245,14 @@
                 "min": 0,
                 "max": 500
             },
+            "comment_reply_screenshot_max": {
+                "description": "小红书楼中楼最多截图数",
+                "type": "int",
+                "hint": "每条顶层评论下最多展开并展示的楼中楼评论数。设为 0 表示不限制；楼中楼不计入最多截图评论数。",
+                "default": 5,
+                "min": 0,
+                "max": 200
+            },
             "comment_screenshot_mode": {
                 "description": "小红书评论截图模式",
                 "type": "string",

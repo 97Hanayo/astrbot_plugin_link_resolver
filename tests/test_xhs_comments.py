@@ -69,7 +69,7 @@ class TestXhsCommentCookies(unittest.TestCase):
         self.assertTrue(cookies[0]["secure"])
 
 
-class TestXhsCommentConfig(unittest.TestCase):
+class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
     def test_conf_schema_exposes_comment_screenshot_settings(self):
         schema_path = Path(__file__).resolve().parents[1] / "_conf_schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -78,6 +78,8 @@ class TestXhsCommentConfig(unittest.TestCase):
         self.assertFalse(items["enable_comment_screenshot"]["default"])
         self.assertEqual(items["comment_screenshot_max"]["default"], 20)
         self.assertEqual(items["comment_screenshot_max"]["min"], 0)
+        self.assertEqual(items["comment_reply_screenshot_max"]["default"], 5)
+        self.assertEqual(items["comment_reply_screenshot_max"]["min"], 0)
         self.assertEqual(items["comment_screenshot_mode"]["default"], COMMENT_MODE_WEB)
         self.assertEqual(
             items["comment_screenshot_mode"]["options"],
@@ -132,12 +134,18 @@ class TestXhsCommentConfig(unittest.TestCase):
 
         self.assertFalse(plugin.xhs_enable_comment_screenshot)
         self.assertEqual(plugin.xhs_comment_screenshot_max, 20)
+        self.assertEqual(plugin.xhs_comment_reply_screenshot_max, 5)
         self.assertEqual(plugin.xhs_comment_screenshot_mode, COMMENT_MODE_WEB)
         self.assertEqual(plugin.xhs_cookies, "")
 
-    def test_refresh_config_preserves_zero_comment_limit(self):
+    def test_refresh_config_preserves_zero_comment_limits(self):
         plugin = LinkResolver.__new__(LinkResolver)
-        plugin.config = {"xhs_settings": {"comment_screenshot_max": 0}}
+        plugin.config = {
+            "xhs_settings": {
+                "comment_screenshot_max": 0,
+                "comment_reply_screenshot_max": 0,
+            }
+        }
         plugin.font_auto_install_enabled = False
         plugin.custom_primary_font_path = None
         plugin.custom_emoji_font_path = None
@@ -181,6 +189,42 @@ class TestXhsCommentConfig(unittest.TestCase):
             LinkResolver._refresh_config(plugin)
 
         self.assertEqual(plugin.xhs_comment_screenshot_max, 0)
+        self.assertEqual(plugin.xhs_comment_reply_screenshot_max, 0)
+
+    async def test_capture_xhs_comment_screenshots_passes_reply_limit(self):
+        screenshotter = SimpleNamespace(capture=AsyncMock(return_value=[]))
+        plugin = SimpleNamespace(
+            xhs_enable_comment_screenshot=True,
+            xhs_comment_screenshotter=screenshotter,
+            xhs_comment_screenshot_max=8,
+            xhs_comment_reply_screenshot_max=3,
+            xhs_comment_screenshot_mode=COMMENT_MODE_WEB,
+            xhs_cookies="a=b",
+        )
+        result = XiaohongshuResult(
+            title="标题",
+            author="作者",
+            text="正文",
+            image_urls=[],
+            file_ids=[],
+            video_url=None,
+            cover_url=None,
+            source_url="https://www.xiaohongshu.com/explore/abc123",
+            note_id="abc123",
+        )
+
+        with patch(
+            "data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu.handler.get_xhs_comment_path",
+            return_value=Path("comments"),
+        ):
+            await XiaohongshuMixin._capture_xhs_comment_screenshots(
+                plugin, result, result.source_url, "req1"
+            )
+
+        screenshotter.capture.assert_awaited_once()
+        kwargs = screenshotter.capture.await_args.kwargs
+        self.assertEqual(kwargs["max_comments"], 8)
+        self.assertEqual(kwargs["max_replies_per_comment"], 3)
 
 
 class TestXhsCommentSendOrder(unittest.IsolatedAsyncioTestCase):
