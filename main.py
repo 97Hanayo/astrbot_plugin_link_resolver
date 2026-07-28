@@ -32,8 +32,11 @@ from .core.twitter.handler import TwitterMixin
 from .core.weibo import WEIBO_MESSAGE_PATTERN, WeiboExtractor
 from .core.weibo.handler import WeiboMixin
 from .core.xiaohongshu import (
+    COMMENT_MODE_WEB,
+    XHS_COMMENT_MODES,
     XHS_MESSAGE_PATTERN,
     XiaohongshuCardRenderer,
+    XiaohongshuCommentScreenshotter,
     XiaohongshuExtractor,
 )
 from .core.xiaohongshu.handler import XiaohongshuMixin
@@ -77,6 +80,7 @@ class LinkResolverPlugin(
         self.managed_primary_font_ready = False
         self.managed_emoji_font_ready = False
         self.xhs_renderer: XiaohongshuCardRenderer | None = None
+        self.xhs_comment_screenshotter: XiaohongshuCommentScreenshotter | None = None
         self._refresh_config()
 
     async def initialize(self) -> None:
@@ -256,6 +260,19 @@ class LinkResolverPlugin(
         self.xhs_concurrent_download = bool(
             self._get_config_value("xhs_settings.concurrent_download", True)
         )
+        self.xhs_enable_comment_screenshot = bool(
+            self._get_config_value("xhs_settings.enable_comment_screenshot", False)
+        )
+        self.xhs_comment_screenshot_max = max(
+            0, int(self._get_config_value("xhs_settings.comment_screenshot_max", 20))
+        )
+        _xhs_comment_mode = str(
+            self._get_config_value("xhs_settings.comment_screenshot_mode", COMMENT_MODE_WEB)
+        ).strip()
+        self.xhs_comment_screenshot_mode = (
+            _xhs_comment_mode if _xhs_comment_mode in XHS_COMMENT_MODES else COMMENT_MODE_WEB
+        )
+        self.xhs_cookies = str(self._get_config_value("xhs_settings.cookies", "")).strip()
 
         # 通用配置
         self.retry_count = max(
@@ -331,7 +348,7 @@ class LinkResolverPlugin(
             else "关闭"
         )
         logger.info(
-            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,摘要=%s,时长<=%s), 抖音(合并=%s,摘要=%s), 小红书(原图=%s,摘要=%s,大图转文件=%s), 微博(原图=%s,合并=%s,Cookie=%s), X(合并=%s,最多=%d), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
+            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,摘要=%s,时长<=%s), 抖音(合并=%s,摘要=%s), 小红书(原图=%s,摘要=%s,大图转文件=%s,评论截图=%s/%s/%d条,Cookie=%s), 微博(原图=%s,合并=%s,Cookie=%s), X(合并=%s,最多=%d), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
             "/".join(enabled_list) if enabled_list else "无",
             self.video_quality.name,
             "开" if self.bili_merge_send else "关",
@@ -342,6 +359,10 @@ class LinkResolverPlugin(
             "开" if self.xhs_download_original else "关",
             "卡片" if self.xhs_render_card else "文字",
             xhs_image_limit_label,
+            "开" if self.xhs_enable_comment_screenshot else "关",
+            self.xhs_comment_screenshot_mode,
+            self.xhs_comment_screenshot_max,
+            "开" if self.xhs_cookies else "关",
             "开" if self.weibo_download_original else "关",
             "开" if self.weibo_merge_send else "关",
             "开" if self.weibo_cookie_enabled else "关",
@@ -370,6 +391,9 @@ class LinkResolverPlugin(
             len(self.group_filter_list),
         )
         self.xhs_renderer = XiaohongshuCardRenderer(self.default_primary_font)
+        self.xhs_comment_screenshotter = XiaohongshuCommentScreenshotter(
+            self.default_primary_font
+        )
 
     # endregion
 

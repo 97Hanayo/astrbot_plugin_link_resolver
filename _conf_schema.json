@@ -230,6 +230,36 @@
                 "type": "bool",
                 "hint": "开启后同时下载多张图片，大幅提升图集解析速度；关闭则逐张串行下载。如遇下载异常可尝试关闭。",
                 "default": true
+            },
+            "enable_comment_screenshot": {
+                "description": "小红书评论截图",
+                "type": "bool",
+                "hint": "默认关闭。开启后会在摘要/正文之后、媒体之前插入评论截图；截图失败不会影响原媒体解析。",
+                "default": false
+            },
+            "comment_screenshot_max": {
+                "description": "小红书最多截图评论数",
+                "type": "int",
+                "hint": "最多加载并截图的评论条数。设为 0 表示不限制，直到页面无更多评论或内部超时保护停止。",
+                "default": 20,
+                "min": 0,
+                "max": 500
+            },
+            "comment_screenshot_mode": {
+                "description": "小红书评论截图模式",
+                "type": "string",
+                "hint": "网页截图使用 Playwright 截取真实评论节点；自绘评论图会提取可见评论文本并渲染为图片。",
+                "default": "网页截图",
+                "options": [
+                    "网页截图",
+                    "自绘评论图"
+                ]
+            },
+            "cookies": {
+                "description": "小红书Cookies",
+                "type": "string",
+                "hint": "可选。粘贴 www.xiaohongshu.com 导出的 cookies.txt 文本或 k=v;... Cookie 字符串，用于加载登录态评论。留空则仅尝试公开可见评论。",
+                "default": ""
             }
         }
     },

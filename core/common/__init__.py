@@ -16,6 +16,7 @@ __all__ = [
     "get_xhs_video_path",
     "get_xhs_image_path",
     "get_xhs_card_path",
+    "get_xhs_comment_path",
     "get_weibo_video_path",
     "get_weibo_image_path",
     "get_twitter_video_path",
@@ -41,6 +42,7 @@ from .paths import (
     get_weibo_image_path,
     get_weibo_video_path,
     get_xhs_card_path,
+    get_xhs_comment_path,
     get_xhs_image_path,
     get_xhs_video_path,
 )

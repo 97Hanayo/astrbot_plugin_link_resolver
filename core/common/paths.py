@@ -114,6 +114,10 @@ def get_xhs_card_path() -> Path:
     return _ensure_dir(get_xhs_cache() / "cards")
 
 
+def get_xhs_comment_path() -> Path:
+    return _ensure_dir(get_xhs_cache() / "comments")
+
+
 # Weibo 路径
 def get_weibo_cache() -> Path:
     return _ensure_dir(get_cache_path() / "weibo")

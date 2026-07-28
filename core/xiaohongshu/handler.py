@@ -15,6 +15,7 @@ from astrbot.api.message_components import File, Image, Node, Nodes, Plain, Vide
 from ..common import (
     SizeLimitExceeded,
     get_xhs_card_path,
+    get_xhs_comment_path,
     get_xhs_image_path,
     get_xhs_video_path,
 )
@@ -598,6 +599,39 @@ class XiaohongshuMixin:
             logger.warning("⚠️ 小红书卡片渲染失败: %s", str(exc))
             return None
 
+    async def _capture_xhs_comment_screenshots(
+        self,
+        result: XiaohongshuResult,
+        target_link: str,
+        request_id: str,
+    ) -> list[Path]:
+        if not getattr(self, "xhs_enable_comment_screenshot", False):
+            return []
+        screenshotter = getattr(self, "xhs_comment_screenshotter", None)
+        if screenshotter is None:
+            return []
+        try:
+            paths = await asyncio.wait_for(
+                screenshotter.capture(
+                    source_url=target_link or result.source_url,
+                    note_id=result.note_id,
+                    output_dir=get_xhs_comment_path(),
+                    request_id=request_id,
+                    max_comments=getattr(self, "xhs_comment_screenshot_max", 20),
+                    mode=getattr(self, "xhs_comment_screenshot_mode", "网页截图"),
+                    cookies_text=getattr(self, "xhs_cookies", ""),
+                ),
+                timeout=90.0,
+            )
+            if paths:
+                logger.info("🍠 小红书评论截图完成: %d 张", len(paths))
+            return paths
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("⚠️ 小红书评论截图失败，已跳过: %s", str(exc))
+            return []
+
     # endregion
 
     # region 小红书处理
@@ -828,8 +862,13 @@ class XiaohongshuMixin:
             )
             return
 
-        summary_enabled = bool(image_paths) or bool(
-            result.video_url and self.xhs_merge_send
+        comment_screenshot_enabled = bool(
+            getattr(self, "xhs_enable_comment_screenshot", False)
+        )
+        summary_enabled = (
+            bool(image_paths)
+            or bool(result.video_url and self.xhs_merge_send)
+            or comment_screenshot_enabled
         )
         render_card = getattr(self, "xhs_render_card", False)
         is_video_post = bool(result.video_url and not image_paths)
@@ -856,6 +895,23 @@ class XiaohongshuMixin:
         if card_path:
             media_paths.append(card_path)
             media_components.insert(0, Image.fromFileSystem(str(card_path.resolve())))
+
+        try:
+            comment_paths = await self._capture_xhs_comment_screenshots(
+                result, target_link, request_id
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("⚠️ 小红书评论截图失败，已跳过: %s", str(exc))
+            comment_paths = []
+        if comment_paths:
+            media_paths.extend(comment_paths)
+            comment_components = [
+                Image.fromFileSystem(str(path.resolve())) for path in comment_paths
+            ]
+            insert_index = 1 if card_path else 0
+            media_components[insert_index:insert_index] = comment_components
         timing["render"] = time.perf_counter() - render_start
         # endregion
 
@@ -941,8 +997,16 @@ class XiaohongshuMixin:
                     if i < len(media_components) - 1:
                         await asyncio.sleep(2.0)
             else:
-                # 视频笔记不合并发送：只发送视频（不含卡片）
-                # 找到视频组件（第一个非卡片的组件）
+                if summary_text:
+                    yield event.chain_result([Plain(summary_text)])
+                prefix_components = [
+                    component
+                    for component in media_components
+                    if not isinstance(component, Video)
+                ]
+                for component in prefix_components:
+                    yield event.chain_result([component])
+                    await asyncio.sleep(2.0)
                 for component in media_components:
                     if isinstance(component, Video):
                         yield event.chain_result([component])

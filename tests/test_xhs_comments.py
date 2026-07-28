@@ -1,0 +1,314 @@
+# ruff: noqa: E402
+"""Tests for Xiaohongshu comment screenshot helpers."""
+
+from __future__ import annotations
+
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+for candidate in Path(__file__).resolve().parents:
+    if (candidate / "data" / "plugins").exists():
+        root_path = str(candidate)
+        if root_path not in sys.path:
+            sys.path.insert(0, root_path)
+        break
+
+from astrbot.api.message_components import Image, Node, Plain
+from data.plugins.astrbot_plugin_link_resolver.core.common.font_manager import (
+    ManagedFontPaths,
+)
+from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu import (
+    XiaohongshuResult,
+)
+from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu.comments import (
+    COMMENT_MODE_DRAW,
+    COMMENT_MODE_WEB,
+    parse_xhs_cookies,
+)
+from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu.handler import (
+    XiaohongshuMixin,
+)
+from data.plugins.astrbot_plugin_link_resolver.main import LinkResolver
+
+
+class DummyEvent:
+    def chain_result(self, chain):
+        return chain
+
+
+class TestXhsCommentCookies(unittest.TestCase):
+    def test_parse_netscape_cookies_keeps_xhs_domain_only(self):
+        raw = "\n".join(
+            [
+                "# Netscape HTTP Cookie File",
+                ".xiaohongshu.com\tTRUE\t/\tTRUE\t1893456000\ta1\tv1",
+                ".example.com\tTRUE\t/\tTRUE\t1893456000\ta2\tv2",
+                "www.xiaohongshu.com\tFALSE\t/\tFALSE\t0\tweb_session\tabc",
+            ]
+        )
+
+        cookies = parse_xhs_cookies(raw)
+
+        self.assertEqual([cookie["name"] for cookie in cookies], ["a1", "web_session"])
+        self.assertEqual(cookies[0]["domain"], ".xiaohongshu.com")
+        self.assertEqual(cookies[0]["expires"], 1893456000)
+        self.assertTrue(cookies[0]["secure"])
+        self.assertFalse(cookies[1]["secure"])
+
+    def test_parse_cookie_header_uses_xhs_domain(self):
+        cookies = parse_xhs_cookies("a1=v1; web_session=abc")
+
+        self.assertEqual([cookie["name"] for cookie in cookies], ["a1", "web_session"])
+        self.assertEqual(cookies[0]["domain"], ".xiaohongshu.com")
+        self.assertEqual(cookies[0]["path"], "/")
+        self.assertTrue(cookies[0]["secure"])
+
+
+class TestXhsCommentConfig(unittest.TestCase):
+    def test_conf_schema_exposes_comment_screenshot_settings(self):
+        schema_path = Path(__file__).resolve().parents[1] / "_conf_schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        items = schema["xhs_settings"]["items"]
+
+        self.assertFalse(items["enable_comment_screenshot"]["default"])
+        self.assertEqual(items["comment_screenshot_max"]["default"], 20)
+        self.assertEqual(items["comment_screenshot_max"]["min"], 0)
+        self.assertEqual(items["comment_screenshot_mode"]["default"], COMMENT_MODE_WEB)
+        self.assertEqual(
+            items["comment_screenshot_mode"]["options"],
+            [COMMENT_MODE_WEB, COMMENT_MODE_DRAW],
+        )
+        self.assertEqual(items["cookies"]["default"], "")
+
+    def test_refresh_config_defaults_comment_screenshot_settings(self):
+        plugin = LinkResolver.__new__(LinkResolver)
+        plugin.config = {}
+        plugin.font_auto_install_enabled = False
+        plugin.custom_primary_font_path = None
+        plugin.custom_emoji_font_path = None
+        plugin.weibo_extractor = type(
+            "WeiboExtractorStub",
+            (),
+            {
+                "set_cookie": lambda self, cookie: None,
+                "has_user_cookie": lambda self: False,
+            },
+        )()
+        plugin._get_config_value = LinkResolver._get_config_value.__get__(
+            plugin, LinkResolver
+        )
+
+        with (
+            patch.object(plugin, "_configure_managed_fonts", lambda: None),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.get_user_font_paths",
+                return_value=ManagedFontPaths(primary=None, emoji=None),
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.get_managed_font_paths",
+                return_value=ManagedFontPaths(primary=None, emoji=None),
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.find_default_font",
+                return_value=None,
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.find_emoji_font",
+                return_value=None,
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCardRenderer"
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCommentScreenshotter"
+            ),
+        ):
+            LinkResolver._refresh_config(plugin)
+
+        self.assertFalse(plugin.xhs_enable_comment_screenshot)
+        self.assertEqual(plugin.xhs_comment_screenshot_max, 20)
+        self.assertEqual(plugin.xhs_comment_screenshot_mode, COMMENT_MODE_WEB)
+        self.assertEqual(plugin.xhs_cookies, "")
+
+    def test_refresh_config_preserves_zero_comment_limit(self):
+        plugin = LinkResolver.__new__(LinkResolver)
+        plugin.config = {"xhs_settings": {"comment_screenshot_max": 0}}
+        plugin.font_auto_install_enabled = False
+        plugin.custom_primary_font_path = None
+        plugin.custom_emoji_font_path = None
+        plugin.weibo_extractor = type(
+            "WeiboExtractorStub",
+            (),
+            {
+                "set_cookie": lambda self, cookie: None,
+                "has_user_cookie": lambda self: False,
+            },
+        )()
+        plugin._get_config_value = LinkResolver._get_config_value.__get__(
+            plugin, LinkResolver
+        )
+
+        with (
+            patch.object(plugin, "_configure_managed_fonts", lambda: None),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.get_user_font_paths",
+                return_value=ManagedFontPaths(primary=None, emoji=None),
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.get_managed_font_paths",
+                return_value=ManagedFontPaths(primary=None, emoji=None),
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.find_default_font",
+                return_value=None,
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.find_emoji_font",
+                return_value=None,
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCardRenderer"
+            ),
+            patch(
+                "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCommentScreenshotter"
+            ),
+        ):
+            LinkResolver._refresh_config(plugin)
+
+        self.assertEqual(plugin.xhs_comment_screenshot_max, 0)
+
+
+class TestXhsCommentSendOrder(unittest.IsolatedAsyncioTestCase):
+    async def test_comment_screenshot_is_between_summary_and_media_in_merge(self):
+        event = DummyEvent()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            media_path = Path(tmpdir) / "media.jpg"
+            comment_path = Path(tmpdir) / "comment.png"
+            media_path.write_bytes(b"media")
+            comment_path.write_bytes(b"comment")
+            plugin = _make_xhs_plugin(
+                media_path=media_path,
+                comment_path=comment_path,
+                auto_unmerge_threshold_mb=50,
+            )
+
+            results = []
+            async for result in XiaohongshuMixin._process_xhs(
+                plugin, event, "https://www.xiaohongshu.com/explore/abc123"
+            ):
+                results.append(result)
+
+        nodes = results[0][0]
+        self.assertIsInstance(nodes.nodes[0], Node)
+        self.assertIsInstance(nodes.nodes[0].content[0], Plain)
+        self.assertIsInstance(nodes.nodes[1].content[0], Image)
+        self.assertIn("comment.png", nodes.nodes[1].content[0].path)
+        self.assertIsInstance(nodes.nodes[2].content[0], Image)
+        self.assertIn("media.jpg", nodes.nodes[2].content[0].path)
+
+    async def test_comment_screenshot_is_between_summary_and_media_when_unmerged(self):
+        event = DummyEvent()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            media_path = Path(tmpdir) / "media.jpg"
+            comment_path = Path(tmpdir) / "comment.png"
+            media_path.write_bytes(b"x" * 2 * 1024 * 1024)
+            comment_path.write_bytes(b"comment")
+            plugin = _make_xhs_plugin(
+                media_path=media_path,
+                comment_path=comment_path,
+                auto_unmerge_threshold_mb=1,
+            )
+
+            results = []
+            async for result in XiaohongshuMixin._process_xhs(
+                plugin, event, "https://www.xiaohongshu.com/explore/abc123"
+            ):
+                results.append(result)
+
+        self.assertIsInstance(results[0][0], Plain)
+        self.assertIn("小红书标题", results[0][0].text)
+        self.assertIsInstance(results[1][0], Image)
+        self.assertIn("comment.png", results[1][0].path)
+        self.assertIsInstance(results[2][0], Image)
+        self.assertIn("media.jpg", results[2][0].path)
+
+    async def test_comment_screenshot_failure_keeps_media_send(self):
+        event = DummyEvent()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            media_path = Path(tmpdir) / "media.jpg"
+            media_path.write_bytes(b"media")
+            plugin = _make_xhs_plugin(media_path=media_path, comment_path=None)
+            plugin._capture_xhs_comment_screenshots = AsyncMock(
+                side_effect=RuntimeError("browser missing")
+            )
+
+            results = []
+            async for result in XiaohongshuMixin._process_xhs(
+                plugin, event, "https://www.xiaohongshu.com/explore/abc123"
+            ):
+                results.append(result)
+
+        nodes = results[0][0]
+        self.assertIsInstance(nodes.nodes[0].content[0], Plain)
+        self.assertIsInstance(nodes.nodes[1].content[0], Image)
+        self.assertIn("media.jpg", nodes.nodes[1].content[0].path)
+
+
+def _make_xhs_plugin(
+    *,
+    media_path: Path,
+    comment_path: Path | None,
+    auto_unmerge_threshold_mb: int = 50,
+):
+    plugin = SimpleNamespace(
+        xhs_enabled=True,
+        xhs_summary_mode="文字摘要",
+        xhs_render_card=False,
+        xhs_merge_send=False,
+        xhs_max_media=99,
+        xhs_concurrent_download=False,
+        xhs_auto_unmerge_threshold_mb=auto_unmerge_threshold_mb,
+        xhs_qq_image_size_limit_mb=0,
+        xhs_enable_comment_screenshot=True,
+        retry_count=0,
+        max_video_size_mb=200,
+        xhs_extractor=SimpleNamespace(
+            parse=AsyncMock(
+                return_value=XiaohongshuResult(
+                    title="小红书标题",
+                    author="作者乙",
+                    text="完整正文内容",
+                    image_urls=["https://example.com/xhs.jpg"],
+                    file_ids=[],
+                    video_url=None,
+                    cover_url=None,
+                    source_url="https://www.xiaohongshu.com/explore/abc123",
+                    note_id="abc123",
+                )
+            )
+        ),
+        _refresh_config=lambda: None,
+        _send_reaction_emoji=AsyncMock(),
+        _download_xhs_image=AsyncMock(return_value=media_path),
+        _download_xhs_video=AsyncMock(),
+        _render_xhs_card=AsyncMock(),
+        _prepare_component_for_merge_send=AsyncMock(side_effect=lambda component: component),
+        _get_merge_sender_uin=lambda event: "10001",
+        cleanup_files=AsyncMock(),
+    )
+    plugin._build_xhs_summary = XiaohongshuMixin._build_xhs_summary.__get__(
+        plugin, XiaohongshuMixin
+    )
+    plugin._capture_xhs_comment_screenshots = AsyncMock(
+        return_value=[comment_path] if comment_path else []
+    )
+    return plugin
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

@@ -224,6 +224,7 @@ class TestSummaryModeHandlers(unittest.IsolatedAsyncioTestCase):
                 _download_xhs_image=AsyncMock(return_value=image_path),
                 _download_xhs_video=AsyncMock(),
                 _render_xhs_card=AsyncMock(),
+                _capture_xhs_comment_screenshots=AsyncMock(return_value=[]),
                 _prepare_component_for_merge_send=AsyncMock(
                     side_effect=lambda component: component
                 ),

@@ -122,6 +122,10 @@ ffmpeg -version
 | `xhs_settings.concurrent_download` | 并发下载图集图片 | ✅ 开启 |
 | `xhs_settings.auto_unmerge_threshold_mb` | 图片总大小超过此值时停止合并转发 (MB) | 50 |
 | `xhs_settings.qq_image_size_limit_mb` | 单张图片超过此值时转为文件发送 (MB) | 30 |
+| `xhs_settings.enable_comment_screenshot` | 开启评论截图，插入在摘要后、媒体前 | ❌ 关闭 |
+| `xhs_settings.comment_screenshot_max` | 最多截图评论条数，`0` 表示不限制 | 20 |
+| `xhs_settings.comment_screenshot_mode` | `网页截图` 或 `自绘评论图` | `网页截图` |
+| `xhs_settings.cookies` | 小红书 Cookies 文本，用于登录态评论 | 空 |
 
 ### X 设置
 
@@ -209,6 +213,14 @@ data/plugin_data/astrbot_plugin_link_resolver/
 SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 ```
 - 微博分享链路风控较重，公开微博也可能出现临时访客校验。
+
+### 小红书 Cookie 与评论截图（可选）
+
+小红书评论截图默认关闭。开启 `xhs_settings.enable_comment_screenshot` 后，插件会尝试用 Playwright 打开笔记页面并截图评论；若运行环境没有可用 Chromium/Edge，或页面风控导致评论不可见，会跳过评论截图并继续发送原有媒体。
+
+`xhs_settings.cookies` 可粘贴 `www.xiaohongshu.com` 导出的 `cookies.txt` 内容，也兼容 `a=1; b=2` 形式的 Cookie 字符串。建议使用登录后的 Cookie，以便加载更多可见评论。
+
+首次使用网页截图模式前，运行环境通常还需要安装浏览器：`python -m playwright install chromium`。
 
 ### 插件字体安装（可选）
 
