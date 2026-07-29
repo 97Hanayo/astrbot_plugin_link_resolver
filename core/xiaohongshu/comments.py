@@ -400,11 +400,11 @@ class XiaohongshuCommentScreenshotter:
 
 
 def _normalize_xhs_url(source_url: str, note_id: str | None) -> str:
-    if note_id:
-        return f"https://www.xiaohongshu.com/explore/{note_id}"
     parsed = urlparse(source_url)
     if parsed.scheme and parsed.netloc:
-        return parsed._replace(query="", fragment="").geturl()
+        return parsed._replace(fragment="").geturl()
+    if note_id:
+        return f"https://www.xiaohongshu.com/explore/{note_id}"
     return source_url
 
 

@@ -28,6 +28,7 @@ from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu import (
 from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu.comments import (
     COMMENT_MODE_DRAW,
     COMMENT_MODE_WEB,
+    _normalize_xhs_url,
     parse_xhs_cookies,
 )
 from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu.handler import (
@@ -67,6 +68,20 @@ class TestXhsCommentCookies(unittest.TestCase):
         self.assertEqual(cookies[0]["domain"], ".xiaohongshu.com")
         self.assertEqual(cookies[0]["path"], "/")
         self.assertTrue(cookies[0]["secure"])
+
+    def test_normalize_xhs_url_preserves_query_for_pc_note_access(self):
+        source_url = (
+            "https://www.xiaohongshu.com/explore/abc123"
+            "?xsec_token=token&xsec_source=pc_feed#ignored"
+        )
+
+        url = _normalize_xhs_url(source_url, "abc123")
+
+        self.assertEqual(
+            url,
+            "https://www.xiaohongshu.com/explore/abc123"
+            "?xsec_token=token&xsec_source=pc_feed",
+        )
 
 
 class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
