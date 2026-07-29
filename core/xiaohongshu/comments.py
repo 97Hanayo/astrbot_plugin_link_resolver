@@ -121,7 +121,6 @@ class XiaohongshuCommentScreenshotter:
         output_dir: Path,
         request_id: str,
         max_comments: int = 20,
-        max_replies_per_comment: int = 5,
         mode: str = COMMENT_MODE_WEB,
         cookies_text: str = "",
     ) -> list[Path]:
@@ -133,7 +132,6 @@ class XiaohongshuCommentScreenshotter:
 
         output_dir.mkdir(parents=True, exist_ok=True)
         max_comments = max(0, int(max_comments))
-        max_replies_per_comment = max(0, int(max_replies_per_comment))
         mode = mode if mode in XHS_COMMENT_MODES else COMMENT_MODE_WEB
         url = _normalize_xhs_url(source_url, note_id)
         cookies = parse_xhs_cookies(cookies_text)
@@ -173,12 +171,6 @@ class XiaohongshuCommentScreenshotter:
                     if count <= 0:
                         logger.info("🍠 小红书评论截图: 未找到可见评论")
                         return []
-                    await self._prepare_nested_replies(
-                        page,
-                        locator,
-                        count,
-                        max_replies_per_comment,
-                    )
                     if mode == COMMENT_MODE_DRAW:
                         items = await self._extract_comment_items(locator, count)
                         return await asyncio.to_thread(
@@ -279,6 +271,26 @@ class XiaohongshuCommentScreenshotter:
                   if (!clickCloseButton(el)) el.remove();
                 }
               });
+              Array.from(document.body.querySelectorAll('*')).forEach((el) => {
+                if (!isVisible(el)) return;
+                const style = window.getComputedStyle(el);
+                if (style.position !== 'fixed' && style.position !== 'sticky') return;
+                const rect = el.getBoundingClientRect();
+                const text = (el.innerText || el.textContent || '').trim();
+                const cls = String(el.className || '');
+                const sticksToBottom = rect.bottom >= window.innerHeight - 4;
+                const wideBottomBar =
+                  rect.width >= window.innerWidth * 0.55 &&
+                  rect.height >= 34 &&
+                  rect.height <= window.innerHeight * 0.35;
+                const looksLikeActionBar =
+                  /(点点什么|说点什么|评论|回复|点赞|收藏|分享|like|collect|comment|input|bottom|interact|action)/i.test(text + ' ' + cls);
+                const containsComment =
+                  el.querySelector('.parent-comment, .comment-item, [class*=comment-item]');
+                if (sticksToBottom && wideBottomBar && !containsComment && looksLikeActionBar) {
+                  el.remove();
+                }
+              });
               document.documentElement.style.overflow = '';
               document.body.style.overflow = '';
             }
@@ -358,90 +370,6 @@ class XiaohongshuCommentScreenshotter:
             }
             """
         )
-
-    async def _prepare_nested_replies(
-        self,
-        page,
-        locator,
-        count: int,
-        max_replies_per_comment: int,
-    ) -> None:
-        for index in range(count):
-            await self._dismiss_obstructions(page)
-            item = locator.nth(index)
-            await item.scroll_into_view_if_needed(timeout=5000)
-            handle = await item.element_handle(timeout=5000)
-            if handle is None:
-                continue
-            for _ in range(8):
-                clicked = await page.evaluate(
-                    """
-                    (root) => {
-                      const candidates = Array.from(
-                        root.querySelectorAll('button, a, span, div')
-                      ).map((el) => {
-                        const text = (el.innerText || el.textContent || '').trim();
-                        const compactText = text.replace(/\\s+/g, '');
-                        const exactReplyExpand = /^展开\\d+条回复$/.test(compactText);
-                        const replyExpand = exactReplyExpand || /^(展开|查看|更多).{0,12}回复$/.test(compactText);
-                        const style = window.getComputedStyle(el);
-                        const rect = el.getBoundingClientRect();
-                        return {el, text, exactReplyExpand, replyExpand, style, rect};
-                      }).filter((item) => {
-                        if (!item.replyExpand) return false;
-                        if (item.style.display === 'none' || item.style.visibility === 'hidden') return false;
-                        return item.rect.width > 0 && item.rect.height > 0;
-                      }).sort((a, b) => {
-                        if (a.exactReplyExpand !== b.exactReplyExpand) {
-                          return a.exactReplyExpand ? -1 : 1;
-                        }
-                        return (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height);
-                      });
-                      const clickable = candidates[0]?.el;
-                      if (!clickable) return false;
-                      const target = clickable.closest('button, a') || clickable;
-                      target.scrollIntoView({block: 'center', inline: 'nearest'});
-                      target.click();
-                      return true;
-                    }
-                    """,
-                    handle,
-                )
-                if not clicked:
-                    break
-                await page.wait_for_timeout(450)
-                await self._dismiss_obstructions(page)
-            await handle.evaluate(
-                """
-                (root, maxReplies) => {
-                  const candidates = Array.from(
-                    root.querySelectorAll(
-                      '[class*=reply], [class*=sub-comment], [class*=child-comment], [class*=comment-item]'
-                    )
-                  ).filter((el) => {
-                    if (el === root) return false;
-                    const cls = String(el.className || '').toLowerCase();
-                    return (
-                      cls.includes('reply') ||
-                      cls.includes('sub-comment') ||
-                      cls.includes('child-comment')
-                    );
-                  });
-                  const leafReplies = candidates.filter((el) => {
-                    const nested = candidates.some((other) => other !== el && el.contains(other));
-                    const text = (el.innerText || el.textContent || '').trim();
-                    return !nested && text;
-                  });
-                  leafReplies.forEach((el, i) => {
-                    if (maxReplies > 0 && i >= maxReplies) {
-                      el.setAttribute('data-xhs-hidden-reply', '1');
-                      el.style.display = 'none';
-                    }
-                  });
-                }
-                """,
-                max_replies_per_comment,
-            )
 
     async def _capture_web_comments(
         self,

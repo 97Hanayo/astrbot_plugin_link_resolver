@@ -11,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from PIL import Image as PillowImage, ImageDraw
+
 for candidate in Path(__file__).resolve().parents:
     if (candidate / "data" / "plugins").exists():
         root_path = str(candidate)
@@ -29,6 +31,7 @@ from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu.comments import 
     COMMENT_MODE_DRAW,
     COMMENT_MODE_WEB,
     _normalize_xhs_url,
+    _trim_comment_fragment,
     parse_xhs_cookies,
 )
 from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu.handler import (
@@ -93,8 +96,7 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(items["enable_comment_screenshot"]["default"])
         self.assertEqual(items["comment_screenshot_max"]["default"], 20)
         self.assertEqual(items["comment_screenshot_max"]["min"], 0)
-        self.assertEqual(items["comment_reply_screenshot_max"]["default"], 5)
-        self.assertEqual(items["comment_reply_screenshot_max"]["min"], 0)
+        self.assertNotIn("comment_reply_screenshot_max", items)
         self.assertEqual(items["comment_screenshot_mode"]["default"], COMMENT_MODE_WEB)
         self.assertEqual(
             items["comment_screenshot_mode"]["options"],
@@ -149,7 +151,6 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(plugin.xhs_enable_comment_screenshot)
         self.assertEqual(plugin.xhs_comment_screenshot_max, 20)
-        self.assertEqual(plugin.xhs_comment_reply_screenshot_max, 5)
         self.assertEqual(plugin.xhs_comment_screenshot_mode, COMMENT_MODE_WEB)
         self.assertEqual(plugin.xhs_cookies, "")
 
@@ -158,7 +159,6 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
         plugin.config = {
             "xhs_settings": {
                 "comment_screenshot_max": 0,
-                "comment_reply_screenshot_max": 0,
             }
         }
         plugin.font_auto_install_enabled = False
@@ -204,7 +204,6 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
             LinkResolver._refresh_config(plugin)
 
         self.assertEqual(plugin.xhs_comment_screenshot_max, 0)
-        self.assertEqual(plugin.xhs_comment_reply_screenshot_max, 0)
 
     def test_refresh_config_writes_xhs_cookies_to_file(self):
         plugin = LinkResolver.__new__(LinkResolver)
@@ -316,13 +315,12 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(plugin.xhs_cookies, "a1=v1; web_session=abc")
 
-    async def test_capture_xhs_comment_screenshots_passes_reply_limit(self):
+    async def test_capture_xhs_comment_screenshots_passes_comment_limit(self):
         screenshotter = SimpleNamespace(capture=AsyncMock(return_value=[]))
         plugin = SimpleNamespace(
             xhs_enable_comment_screenshot=True,
             xhs_comment_screenshotter=screenshotter,
             xhs_comment_screenshot_max=8,
-            xhs_comment_reply_screenshot_max=3,
             xhs_comment_screenshot_mode=COMMENT_MODE_WEB,
             xhs_cookies="a=b",
         )
@@ -349,7 +347,26 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
         screenshotter.capture.assert_awaited_once()
         kwargs = screenshotter.capture.await_args.kwargs
         self.assertEqual(kwargs["max_comments"], 8)
-        self.assertEqual(kwargs["max_replies_per_comment"], 3)
+        self.assertNotIn("max_replies_per_comment", kwargs)
+
+    def test_trim_comment_fragment_removes_top_and_bottom_blank_space(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "fragment.png"
+            image = PillowImage.new("RGB", (200, 420), (255, 255, 255))
+            draw = ImageDraw.Draw(image)
+            draw.rectangle((20, 180, 180, 230), fill=(60, 60, 60))
+            image.save(path)
+            image.close()
+
+            _trim_comment_fragment(path, padding=12)
+
+            trimmed = PillowImage.open(path)
+            try:
+                self.assertEqual(trimmed.width, 200)
+                self.assertLess(trimmed.height, 100)
+                self.assertGreaterEqual(trimmed.height, 70)
+            finally:
+                trimmed.close()
 
 
 class TestXhsCommentSendOrder(unittest.IsolatedAsyncioTestCase):

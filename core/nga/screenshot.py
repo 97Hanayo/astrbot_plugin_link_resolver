@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import logging
 from dataclasses import dataclass
@@ -185,12 +186,13 @@ class NgaScreenshotter:
                         await context.add_cookies(cookies)
                     page = await context.new_page()
                     await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                    await page.wait_for_timeout(1800)
+                    await self._wait_for_page_images(page)
                     image_urls = await self._prepare_capture(page)
                     target = page.locator("#codex-nga-capture-root")
                     if await target.count() <= 0:
                         logger.warning("NGA screenshot skipped: capture root not found")
                         return NgaCaptureResult([], image_urls)
+                    await self._wait_for_capture_images(page)
                     path = output_dir / f"{request_id}_nga_main_hot.png"
                     await target.screenshot(path=str(path), timeout=20000)
                     return NgaCaptureResult([path], image_urls)
@@ -205,6 +207,115 @@ class NgaScreenshotter:
             headless=True,
             fallback_executable_paths=browser_channel_candidates(),
         )
+
+    async def _wait_for_page_images(self, page) -> None:
+        try:
+            await page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception as exc:
+            logger.debug("NGA networkidle wait skipped: %s", exc)
+        try:
+            await asyncio.wait_for(
+                page.evaluate(
+                    """
+                    async () => {
+                      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                      const documentElement = document.documentElement;
+                      const maxY = Math.max(
+                        document.body?.scrollHeight || 0,
+                        documentElement?.scrollHeight || 0
+                      );
+                      for (let y = 0; y <= maxY; y += 900) {
+                        window.scrollTo(0, y);
+                        await sleep(220);
+                      }
+                      window.scrollTo(0, 0);
+                    }
+                    """,
+                ),
+                timeout=12,
+            )
+        except Exception as exc:
+            logger.debug("NGA lazy image scroll wait skipped: %s", exc)
+
+        await self._wait_for_images(page, "img")
+
+    async def _wait_for_capture_images(self, page) -> None:
+        await self._wait_for_images(page, "#codex-nga-capture-root img")
+
+    async def _wait_for_images(self, page, selector: str) -> None:
+        try:
+            await asyncio.wait_for(
+                page.evaluate(
+                    """
+                    async (selector) => {
+                      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                      const lazyKeys = [
+                        'data-src',
+                        'data-original',
+                        'data-lazy-src',
+                        'data-url',
+                        'data-file',
+                        '_src',
+                        'file'
+                      ];
+                      const normalize = (raw) => {
+                        if (!raw || raw.startsWith('data:') || raw.startsWith('javascript:')) return '';
+                        try {
+                          return new URL(raw, location.href).href;
+                        } catch {
+                          return '';
+                        }
+                      };
+                      const hydrateLazySrc = (img) => {
+                        img.loading = 'eager';
+                        img.decoding = 'async';
+                        const currentUrl = normalize(img.currentSrc || img.src || '');
+                        let lazyUrl = '';
+                        for (const key of lazyKeys) {
+                          const value = img.getAttribute(key);
+                          const url = normalize(value);
+                          if (url) {
+                            lazyUrl = url;
+                            break;
+                          }
+                        }
+                        if (
+                          lazyUrl &&
+                          (!currentUrl || currentUrl.includes('placeholder') || currentUrl.includes('/transparent'))
+                        ) {
+                          img.src = lazyUrl;
+                          return;
+                        }
+                        if (currentUrl) return;
+                        const srcset = img.getAttribute('data-srcset') || img.getAttribute('data-original-srcset');
+                        if (srcset) img.setAttribute('srcset', srcset);
+                      };
+                      const waitOne = async (img) => {
+                        hydrateLazySrc(img);
+                        if (!img.currentSrc && !img.src) return;
+                        if (img.complete && img.naturalWidth > 0) return;
+                        await Promise.race([
+                          new Promise((resolve) => {
+                            img.addEventListener('load', resolve, { once: true });
+                            img.addEventListener('error', resolve, { once: true });
+                          }),
+                          sleep(8000)
+                        ]);
+                        if (img.decode && img.complete && img.naturalWidth > 0) {
+                          try {
+                            await Promise.race([img.decode(), sleep(3000)]);
+                          } catch {}
+                        }
+                      };
+                      await Promise.allSettled(Array.from(document.querySelectorAll(selector)).map(waitOne));
+                    }
+                    """,
+                    selector,
+                ),
+                timeout=18,
+            )
+        except Exception as exc:
+            logger.debug("NGA image wait skipped for %s: %s", selector, exc)
 
     async def _prepare_capture(self, page) -> list[str]:
         image_urls = await page.evaluate(
@@ -269,17 +380,37 @@ class NgaScreenshotter:
               const collectImages = (roots) => {
                 const urls = [];
                 const seen = new Set();
+                const lazyKeys = [
+                  'data-src',
+                  'data-original',
+                  'data-lazy-src',
+                  'data-url',
+                  'data-file',
+                  '_src',
+                  'file'
+                ];
                 roots.filter(Boolean).forEach((rootNode) => {
                   rootNode.querySelectorAll('img,a').forEach((el) => {
                     const rect = el.getBoundingClientRect();
-                    const raw = el.currentSrc || el.src || el.href || el.getAttribute('href') || el.getAttribute('src') || '';
+                    const rawCandidates = [
+                      el.currentSrc,
+                      el.src,
+                      el.href,
+                      el.getAttribute('href'),
+                      el.getAttribute('src'),
+                      ...lazyKeys.map((key) => el.getAttribute(key))
+                    ];
                     let url = '';
-                    try {
-                      url = new URL(raw, location.href).href;
-                    } catch {
-                      return;
+                    for (const raw of rawCandidates) {
+                      try {
+                        const candidate = new URL(raw || '', location.href).href;
+                        if (isAttachmentImage(candidate, el)) {
+                          url = candidate;
+                          break;
+                        }
+                      } catch {}
                     }
-                    if (!isAttachmentImage(url, el)) return;
+                    if (!url) return;
                     if (rect.width > 0 && rect.height > 0 && (rect.width < 80 || rect.height < 80) && !url.includes('/attachments/')) return;
                     if (seen.has(url)) return;
                     seen.add(url);

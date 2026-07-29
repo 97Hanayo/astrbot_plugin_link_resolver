@@ -618,9 +618,6 @@ class XiaohongshuMixin:
                     output_dir=get_xhs_comment_path(),
                     request_id=request_id,
                     max_comments=getattr(self, "xhs_comment_screenshot_max", 20),
-                    max_replies_per_comment=getattr(
-                        self, "xhs_comment_reply_screenshot_max", 5
-                    ),
                     mode=getattr(self, "xhs_comment_screenshot_mode", "网页截图"),
                     cookies_text=getattr(self, "xhs_cookies", ""),
                 ),

@@ -73,7 +73,7 @@ class NgaMixin:
                     request_id=request_id,
                     cookies_text=getattr(self, "nga_cookies", ""),
                 ),
-                timeout=70.0,
+                timeout=110.0,
             )
             paths = list(capture_result.screenshots)
             if not paths:

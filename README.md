@@ -125,7 +125,6 @@ ffmpeg -version
 | `xhs_settings.qq_image_size_limit_mb` | 单张图片超过此值时转为文件发送 (MB) | 30 |
 | `xhs_settings.enable_comment_screenshot` | 开启评论截图，插入在摘要后、媒体前 | ❌ 关闭 |
 | `xhs_settings.comment_screenshot_max` | 最多截图评论条数，`0` 表示不限制 | 20 |
-| `xhs_settings.comment_reply_screenshot_max` | 每条顶层评论最多展示楼中楼条数，`0` 表示不限制 | 5 |
 | `xhs_settings.comment_screenshot_mode` | `网页截图` 或 `自绘评论图` | `网页截图` |
 | `xhs_settings.cookies` | 小红书 Cookies 文本，用于登录态评论 | 空 |
 
@@ -236,7 +235,7 @@ SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 
 小红书评论截图默认关闭。开启 `xhs_settings.enable_comment_screenshot` 后，插件会尝试用 Playwright 打开笔记页面并截图评论；若运行环境没有可用 Chromium/Edge，或页面风控导致评论不可见，会跳过评论截图并继续发送原有媒体。
 
-顶层评论受 `xhs_settings.comment_screenshot_max` 控制；楼中楼受 `xhs_settings.comment_reply_screenshot_max` 控制，默认每条顶层评论展示前 5 条，且不计入顶层评论总数。两个配置都支持 `0` 表示不限制。
+顶层评论受 `xhs_settings.comment_screenshot_max` 控制，支持 `0` 表示不限制。评论截图不会主动展开楼中楼回复。
 
 小红书 Cookies 获取方式参考上面的方式一和方式二：打开 [xiaohongshu.com](https://www.xiaohongshu.com) 并登录，使用 **Copy** 粘贴到 `xhs_settings.cookies`，或使用 **Export** 导出后保存为 `cookies/xhs_cookies.txt`。方式一保存配置并重载后，也会自动把内容保存到方式二对应路径。
 
