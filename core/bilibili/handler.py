@@ -1117,7 +1117,15 @@ class BilibiliMixin:
                         max_duration_seconds,
                         title[:30],
                     )
-                    event.set_result(event.plain_result("视频太长了你自己看去"))
+                    video_link = ref.source_url
+                    if not video_link:
+                        video_id = ref.bvid or (f"av{ref.avid}" if ref.avid else None)
+                        if video_id:
+                            video_link = f"https://www.bilibili.com/video/{video_id}"
+                    message = "视频太长了你自己看去"
+                    if video_link:
+                        message += f"\n链接：{video_link}"
+                    event.set_result(event.plain_result(message))
                     return
 
             video_paths: list[Path] = []

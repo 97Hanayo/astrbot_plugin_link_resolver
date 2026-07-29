@@ -3,7 +3,7 @@
 [![AstrBot Plugin](https://img.shields.io/badge/AstrBot-Plugin-blue?style=flat-square)](https://github.com/AstrBotDevs/AstrBot)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-green?style=flat-square)](LICENSE)
 
-支持监听聊天中的 **B站** / **抖音** / **小红书** / **微博** / **X** 链接，自动解析并发送视频或图集。无需命令，发送链接即可触发。
+支持监听聊天中的 **B站** / **抖音** / **小红书** / **微博** / **X** / **NGA** 链接，自动解析并发送视频、图集或帖子截图。无需命令，发送链接即可触发。
 
 ---
 
@@ -15,6 +15,7 @@
 - 🚦 **群过滤(黑/白名单)**：按群号控制哪些群启用解析，私聊不受影响
 - 🐦 **微博解析**：支持单条微博正文、图片、视频，默认原图优先
 - 𝕏 **X 解析**：支持 `twitter.com` / `x.com` 推文图片和视频解析
+- 🧵 **NGA 解析**：支持帖子网页截图，并可下载主楼/热点区域的附件图片随消息发送
 - 🧾 **摘要模式**：B站、抖音和小红书支持文字摘要或渲染卡片
 - 🔤 **字体管理**：支持自定义字体，也可按需安装托管字体
 
@@ -43,7 +44,7 @@ ffmpeg -version
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `enable_platforms` | 勾选要启用解析的平台 | B站, 抖音, 小红书, 微博, X |
+| `enable_platforms` | 勾选要启用解析的平台 | B站, 抖音, 小红书, 微博, X, NGA |
 | `general_settings.retry_count` | 解析失败重试次数（所有平台共用） | 3 |
 | `general_settings.max_video_size_mb` | 最大视频大小限制 (MB)，超过则跳过下载或自动降画质 | 200 |
 | `general_settings.reaction_emoji_enabled` | 识别链接后是否发表情回应 | ✅ 开启 |
@@ -135,6 +136,14 @@ ffmpeg -version
 | `twitter_settings.max_media` | 单条推文最多发送媒体数 | 99 |
 | `twitter_settings.merge_send` | 单视频推文使用合并转发 | ❌ 关闭 |
 
+### NGA 设置
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `nga_settings.merge_send` | 使用合并转发发送来源链接、网页截图和附件图 | ❌ 关闭 |
+| `nga_settings.max_attachment_images` | 从主楼/热点区域下载并追加发送的附件图片数量，`0` 表示只发网页截图 | 9 |
+| `nga_settings.cookies` | NGA Cookies 文本，用于登录态页面截图 | 空 |
+
 
 ---
 
@@ -150,6 +159,9 @@ ffmpeg -version
 - `weibo.cn/<mblogid>`
 - `twitter.com/<user>/status/<id>`
 - `x.com/<user>/status/<id>`
+- `bbs.nga.cn/read.php?tid=...`
+- `ngabbs.com/read.php?tid=...`
+- `nga.178.com/read.php?tid=...`
 
 ### X 默认行为
 
@@ -173,6 +185,7 @@ astrbot_plugin_link_resolver/
 │   ├── twitter/         # X/Twitter解析
 │   ├── weibo/           # 微博解析
 │   ├── xiaohongshu/     # 小红书解析
+│   ├── nga/             # NGA解析
 │   └── common/          # 公共工具
 └── tests/               # 测试
 
@@ -186,7 +199,7 @@ data/plugin_data/astrbot_plugin_link_resolver/
 
 ## 🍪 Cookies 配置（可选）
 
-填写 B 站 Cookie 可解锁更高画质（如 1080P60、4K）。小红书 Cookie 可用于加载登录态可见评论。
+填写 B 站 Cookie 可解锁更高画质（如 1080P60、4K）。小红书 Cookie 可用于加载登录态可见评论，NGA Cookie 可用于登录态帖子截图和附件访问。
 
 ### 方式一：管理面板配置（推荐）
 
@@ -206,6 +219,7 @@ data/plugin_data/astrbot_plugin_link_resolver/
 
 - B站：`data/plugin_data/astrbot_plugin_link_resolver/cookies/bili_cookies.txt`
 - 小红书：`data/plugin_data/astrbot_plugin_link_resolver/cookies/xhs_cookies.txt`
+- NGA：`data/plugin_data/astrbot_plugin_link_resolver/cookies/nga_cookies.txt`
 
 ### 微博 Cookie（可选）
 
@@ -229,6 +243,14 @@ SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 `xhs_settings.cookies` 可粘贴 `www.xiaohongshu.com` 导出的 `cookies.txt` 内容，也兼容 `a=1; b=2` 形式的 Cookie 字符串。建议使用登录后的 Cookie，以便加载更多可见评论。
 
 首次使用网页截图模式前，运行环境通常还需要安装浏览器：`python -m playwright install chromium`。
+
+### NGA Cookie 与帖子截图（可选）
+
+NGA 解析会用 Playwright 打开帖子页面并截图，默认发送网页截图；如果主楼或热点区域包含附件图片，会按 `nga_settings.max_attachment_images` 下载附件原图并追加到聊天记录里。普通回复楼层不会额外下载附件。
+
+`nga_settings.cookies` 可粘贴 `ngabbs.com`、`bbs.nga.cn` 或 `nga.178.com` 导出的 `cookies.txt` 内容，也兼容 `a=1; b=2` 形式的 Cookie 字符串。插件会把 NGA 常用域名自动共用，配置保存后也会写入 `cookies/nga_cookies.txt`。
+
+NGA 网页请求较容易返回风控或登录态差异；如果公开访问截图不完整，建议使用登录后的 Cookie。
 
 ### 插件字体安装（可选）
 

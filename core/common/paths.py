@@ -68,6 +68,11 @@ def get_xhs_cookies_file() -> Path:
     return get_cookies_path() / "xhs_cookies.txt"
 
 
+def get_nga_cookies_file() -> Path:
+    """获取 NGA Cookies 文件路径"""
+    return get_cookies_path() / "nga_cookies.txt"
+
+
 # Bilibili 路径
 def get_bilibili_cache() -> Path:
     return _ensure_dir(get_cache_path() / "bilibili")
@@ -121,6 +126,19 @@ def get_xhs_card_path() -> Path:
 
 def get_xhs_comment_path() -> Path:
     return _ensure_dir(get_xhs_cache() / "comments")
+
+
+# NGA 路径
+def get_nga_cache() -> Path:
+    return _ensure_dir(get_cache_path() / "nga")
+
+
+def get_nga_screenshot_path() -> Path:
+    return _ensure_dir(get_nga_cache() / "screenshots")
+
+
+def get_nga_image_path() -> Path:
+    return _ensure_dir(get_nga_cache() / "images")
 
 
 # Weibo 路径

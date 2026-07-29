@@ -350,6 +350,61 @@ class TestSummaryModeHandlers(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("链接：https://b23.tv/", first_component.text)
 
+    async def test_process_bili_duration_limit_result_includes_video_link(self):
+        event = DummyEvent()
+        plugin = SimpleNamespace(
+            bili_enabled=True,
+            enable_multi_page=True,
+            multi_page_max=3,
+            bili_max_duration_seconds=300,
+            retry_count=0,
+            error_notify_mode="静默",
+            _refresh_config=lambda: None,
+            _send_reaction_emoji=AsyncMock(),
+            _load_cookies=lambda: None,
+            _build_credential=lambda cookies: object(),
+            _check_cookie_status=AsyncMock(
+                return_value=SimpleNamespace(
+                    is_login=False,
+                    is_vip=False,
+                    vip_type=0,
+                    message="游客",
+                )
+            ),
+            _get_video_info=AsyncMock(
+                return_value={
+                    "bvid": "BV1xx411c7mD",
+                    "title": "B站长视频",
+                    "owner": {"name": "UP主甲"},
+                    "duration": 3600,
+                    "stat": {},
+                    "pic": "https://example.com/cover.jpg",
+                    "pages": [{"part": "P1", "duration": 3600}],
+                }
+            ),
+            _download_video=AsyncMock(),
+        )
+
+        with patch(
+            "data.plugins.astrbot_plugin_link_resolver.core.bilibili.handler.video.Video",
+            return_value=object(),
+        ):
+            await BilibiliMixin._process_bili_video(
+                plugin,
+                event,
+                VideoRef(
+                    bvid="BV1xx411c7mD",
+                    avid=None,
+                    page_index=0,
+                    source_url="https://www.bilibili.com/video/BV1xx411c7mD",
+                ),
+            )
+
+        self.assertIsNotNone(event.result)
+        self.assertIn("视频太长了你自己看去", event.result)
+        self.assertIn("https://www.bilibili.com/video/BV1xx411c7mD", event.result)
+        plugin._download_video.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

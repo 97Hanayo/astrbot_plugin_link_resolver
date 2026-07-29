@@ -19,6 +19,7 @@ from .core.bilibili import BILI_MESSAGE_PATTERN, BilibiliMixin
 from .core.common import (
     SizeLimitExceeded,
     get_bili_cookies_file,
+    get_nga_cookies_file,
     get_xhs_cookies_file,
 )
 from .core.common.card_renderer import find_default_font, find_emoji_font
@@ -31,6 +32,7 @@ from .core.common.font_manager import (
 )
 from .core.douyin import DOUYIN_MESSAGE_PATTERN, DouyinExtractor
 from .core.douyin.handler import DouyinMixin
+from .core.nga import NGA_MESSAGE_PATTERN, NgaMixin, NgaScreenshotter
 from .core.twitter import TWITTER_MESSAGE_PATTERN, TwitterExtractor
 from .core.twitter.handler import TwitterMixin
 from .core.weibo import WEIBO_MESSAGE_PATTERN, WeiboExtractor
@@ -58,11 +60,11 @@ SUMMARY_MODE_CARD = "渲染卡片"
 @register(
     "astrbot_plugin_link_resolver",
     "acacia",
-    "解析 & 下载 Bilibili/抖音/小红书/微博/X",
-    "1.0.10",
+    "解析 & 下载 Bilibili/抖音/小红书/微博/X/NGA",
+    "1.1.0",
 )
 class LinkResolverPlugin(
-    BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, TwitterMixin, Star
+    BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, TwitterMixin, NgaMixin, Star
 ):
     def __init__(self, context: Context, config: AstrBotConfig | dict | None = None):
         super().__init__(context)
@@ -85,6 +87,7 @@ class LinkResolverPlugin(
         self.managed_emoji_font_ready = False
         self.xhs_renderer: XiaohongshuCardRenderer | None = None
         self.xhs_comment_screenshotter: XiaohongshuCommentScreenshotter | None = None
+        self.nga_screenshotter: NgaScreenshotter | None = None
         self._refresh_config()
 
     async def initialize(self) -> None:
@@ -144,15 +147,16 @@ class LinkResolverPlugin(
 
         # 平台启用列表
         enable_platforms = self._get_config_value(
-            "enable_platforms", ["B站", "抖音", "小红书", "微博", "X"]
+            "enable_platforms", ["B站", "抖音", "小红书", "微博", "X", "NGA"]
         )
         if not isinstance(enable_platforms, list):
-            enable_platforms = ["B站", "抖音", "小红书", "微博", "X"]
+            enable_platforms = ["B站", "抖音", "小红书", "微博", "X", "NGA"]
         self.bili_enabled = "B站" in enable_platforms
         self.douyin_enabled = "抖音" in enable_platforms
         self.xhs_enabled = "小红书" in enable_platforms
         self.weibo_enabled = "微博" in enable_platforms
         self.twitter_enabled = "X" in enable_platforms
+        self.nga_enabled = "NGA" in enable_platforms
 
         # B站配置
         self.quality_label = str(
@@ -239,6 +243,38 @@ class LinkResolverPlugin(
         self.twitter_merge_send = bool(
             self._get_config_value("twitter_settings.merge_send", False)
         )
+
+        # NGA 配置
+        self.nga_merge_send = bool(
+            self._get_config_value("nga_settings.merge_send", False)
+        )
+        self.nga_max_attachment_images = max(
+            0, int(self._get_config_value("nga_settings.max_attachment_images", 9))
+        )
+        self.nga_cookies = str(self._get_config_value("nga_settings.cookies", "")).strip()
+        nga_cookies_file = get_nga_cookies_file()
+        if self.nga_cookies:
+            try:
+                nga_cookies_file.parent.mkdir(parents=True, exist_ok=True)
+                if "\n" not in self.nga_cookies and ".ngabbs.com" in self.nga_cookies:
+                    self.nga_cookies = re.sub(
+                        r"\s+(\.?(?:www\.)?(?:ngabbs\.com|nga\.cn|nga\.178\.com)\s)",
+                        r"\n\1",
+                        self.nga_cookies,
+                    )
+                    self.nga_cookies = self.nga_cookies.replace("# ", "\n# ").strip()
+                nga_cookies_file.write_text(self.nga_cookies, encoding="utf-8")
+                logger.info("🍪 NGA Cookie 已从配置写入文件")
+            except Exception as exc:
+                logger.warning("⚠️ 写入 NGA Cookie 文件失败: %s", str(exc))
+        else:
+            try:
+                if nga_cookies_file.exists():
+                    self.nga_cookies = nga_cookies_file.read_text(encoding="utf-8").strip()
+                    if self.nga_cookies:
+                        logger.info("🍪 使用文件读取 NGA Cookie: %s", nga_cookies_file)
+            except Exception as exc:
+                logger.warning("⚠️ 读取 NGA Cookie 文件失败: %s", str(exc))
 
         # 小红书配置
         self.xhs_max_media = max(
@@ -380,7 +416,7 @@ class LinkResolverPlugin(
 
         # 构建启用平台列表
         enabled_list = [
-            p for p in ["B站", "抖音", "小红书", "微博", "X"] if p in enable_platforms
+            p for p in ["B站", "抖音", "小红书", "微博", "X", "NGA"] if p in enable_platforms
         ]
         duration_label = (
             f"{self.bili_max_duration_seconds}s"
@@ -440,6 +476,7 @@ class LinkResolverPlugin(
         self.xhs_comment_screenshotter = XiaohongshuCommentScreenshotter(
             self.default_primary_font
         )
+        self.nga_screenshotter = NgaScreenshotter()
 
     # endregion
 
@@ -1096,6 +1133,15 @@ class LinkResolverPlugin(
         self._register_parse_task("twitter", event)
         await TwitterMixin.handle_twitter(self, event)
 
+    @filter.regex(NGA_MESSAGE_PATTERN, priority=10)
+    async def handle_nga(self, event: AstrMessageEvent):
+        if self._has_json_component(event):
+            return
+        if not self._is_group_allowed(event):
+            return
+        self._register_parse_task("nga", event)
+        await NgaMixin.handle_nga(self, event)
+
     @filter.regex(r".*")
     async def handle_json_card(self, event: AstrMessageEvent):
         if self._is_self_message(event):
@@ -1155,6 +1201,9 @@ class LinkResolverPlugin(
         twitter_links = [
             link for link in unique_links if re.search(TWITTER_MESSAGE_PATTERN, link)
         ]
+        nga_links = [
+            link for link in unique_links if re.search(NGA_MESSAGE_PATTERN, link)
+        ]
 
         if bili_links and self.bili_enabled:
             self._register_parse_task("json-bili", event)
@@ -1207,6 +1256,16 @@ class LinkResolverPlugin(
             event.should_call_llm(True)
             try:
                 await self._process_twitter(event, twitter_links[0], is_from_card=True)
+                return
+            except asyncio.CancelledError:
+                logger.info("♻️ JSON卡片解析任务已中断")
+                return
+
+        if nga_links and self.nga_enabled:
+            self._register_parse_task("json-nga", event)
+            event.should_call_llm(True)
+            try:
+                await self._process_nga(event, nga_links[0], is_from_card=True)
                 return
             except asyncio.CancelledError:
                 logger.info("♻️ JSON卡片解析任务已中断")

@@ -8,14 +8,16 @@
             "抖音",
             "小红书",
             "微博",
-            "X"
+            "X",
+            "NGA"
         ],
         "default": [
             "B站",
             "抖音",
             "小红书",
             "微博",
-            "X"
+            "X",
+            "NGA"
         ]
     },
     "bili_settings": {
@@ -168,6 +170,32 @@
                 "type": "bool",
                 "hint": "仅对单视频推文生效。开启时发送摘要+视频的合并转发；关闭时只发送单独视频。图文、多视频、混合媒体推文始终合并转发。",
                 "default": false
+            }
+        }
+    },
+    "nga_settings": {
+        "description": "NGA 设置",
+        "type": "object",
+        "items": {
+            "merge_send": {
+                "description": "NGA 合并转发",
+                "type": "bool",
+                "hint": "开启时把来源链接和主楼截图放进合并转发；关闭时只发送截图。",
+                "default": false
+            },
+            "max_attachment_images": {
+                "description": "NGA 最多附件图片数",
+                "type": "int",
+                "hint": "从主楼/热点区域下载并追加发送的附件图片数量；设为 0 表示只发网页截图。",
+                "default": 9,
+                "min": 0,
+                "max": 50
+            },
+            "cookies": {
+                "description": "NGA Cookies",
+                "type": "string",
+                "hint": "可选。支持 Get cookies.txt LOCALLY 的 cookies.txt 内容或 k=v;... Cookie 字符串；填写后会自动保存到 cookies/nga_cookies.txt，也可手动导出到该路径。ngabbs.com/nga.cn/nga.178.com 域名会自动共用。",
+                "default": ""
             }
         }
     },

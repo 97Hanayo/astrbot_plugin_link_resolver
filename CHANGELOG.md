@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.1.0
+
+### 新增
+
+- 新增 NGA 论坛链接解析，支持 `bbs.nga.cn`、`ngabbs.com`、`nga.178.com` 等帖子链接。
+- NGA 解析使用网页截图发送帖子内容，并支持下载主楼/热点区域的附件图片追加到聊天记录。
+- 新增 `nga_settings.cookies`、`nga_settings.merge_send`、`nga_settings.max_attachment_images` 配置项。
+- NGA Cookie 支持 `cookies.txt` 与 `k=v;...` 两种格式，并自动在 `ngabbs.com` / `nga.cn` / `nga.178.com` 常用域名间共用。
+
+### 变更
+
+- 插件版本号更新到 `1.1.0`。
+- B站超长视频提示中补充原视频链接，方便手动打开观看。
+
 ## v1.0.10
 
 ### 新增
