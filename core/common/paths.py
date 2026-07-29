@@ -4,6 +4,8 @@
 在首次访问时延迟初始化，因为 StarTools 需要在 AstrBot 上下文初始化后才能使用。
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -46,6 +48,11 @@ def _ensure_dir(path: Path) -> Path:
 def get_cache_path() -> Path:
     """获取缓存根目录"""
     return _ensure_dir(_get_data_dir() / "cache")
+
+
+def get_playwright_browsers_path() -> Path:
+    """Get the plugin-owned Playwright browser cache directory."""
+    return _ensure_dir(_get_data_dir() / "playwright-browsers")
 
 
 def get_cookies_path() -> Path:

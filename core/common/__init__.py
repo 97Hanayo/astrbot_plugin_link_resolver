@@ -4,6 +4,7 @@ __all__ = [
     "SizeLimitExceeded",
     # 路径获取函数
     "get_cache_path",
+    "get_playwright_browsers_path",
     "get_cookies_path",
     "get_fonts_path",
     "get_bili_cookies_file",
@@ -36,6 +37,7 @@ from .paths import (
     get_bilibili_video_path,
     # 路径获取函数
     get_cache_path,
+    get_playwright_browsers_path,
     get_cookies_path,
     get_douyin_card_path,
     get_douyin_image_path,

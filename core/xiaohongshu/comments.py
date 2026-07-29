@@ -12,6 +12,12 @@ from urllib.parse import urlparse
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from astrbot.api import logger
 
+from ..common.playwright_manager import (
+    browser_channel_candidates,
+    configure_playwright_browser_path,
+    launch_chromium,
+)
+
 COMMENT_MODE_WEB = "网页截图"
 COMMENT_MODE_DRAW = "自绘评论图"
 XHS_COMMENT_MODES = (COMMENT_MODE_WEB, COMMENT_MODE_DRAW)
@@ -132,8 +138,17 @@ class XiaohongshuCommentScreenshotter:
         url = _normalize_xhs_url(source_url, note_id)
         cookies = parse_xhs_cookies(cookies_text)
 
+        configure_playwright_browser_path()
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            try:
+                browser = await launch_chromium(
+                    p,
+                    headless=True,
+                    fallback_executable_paths=browser_channel_candidates(),
+                )
+            except Exception as exc:
+                logger.warning("⚠️ 小红书评论截图跳过: Chromium 不可用 (%s)", exc)
+                return []
             try:
                 context = await browser.new_context(
                     viewport={"width": 430, "height": 900},
@@ -445,6 +460,7 @@ class XiaohongshuCommentScreenshotter:
                 await item.scroll_into_view_if_needed(timeout=5000)
                 await self._dismiss_obstructions(page)
                 await item.screenshot(path=str(path), timeout=10000)
+                await asyncio.to_thread(_trim_comment_fragment, path)
                 fragments.append(path)
             return await asyncio.to_thread(
                 self._compose_fragments,
@@ -524,6 +540,67 @@ def _compose_images(
     if chunk:
         paths.append(_save_chunk(chunk, output_dir, request_id, suffix, page_index))
     return paths
+
+
+def _trim_comment_fragment(path: Path, padding: int = 28) -> None:
+    if not path.exists():
+        return
+    image = Image.open(path).convert("RGB")
+    try:
+        width, height = image.size
+        if width <= 0 or height <= 0:
+            return
+        bg = image.getpixel((0, 0))
+        pixels = image.load()
+        row_threshold = max(3, width // 160)
+        top: int | None = None
+        bottom: int | None = None
+        step = 2 if width > 520 else 1
+        for y in range(height):
+            changed = 0
+            for x in range(0, width, step):
+                r, g, b = pixels[x, y]
+                if (
+                    abs(r - bg[0]) > 14
+                    or abs(g - bg[1]) > 14
+                    or abs(b - bg[2]) > 14
+                ):
+                    changed += 1
+                    if changed >= row_threshold:
+                        top = y
+                        break
+            if top is not None:
+                break
+        if top is None:
+            return
+        for y in range(height - 1, top - 1, -1):
+            changed = 0
+            for x in range(0, width, step):
+                r, g, b = pixels[x, y]
+                if (
+                    abs(r - bg[0]) > 14
+                    or abs(g - bg[1]) > 14
+                    or abs(b - bg[2]) > 14
+                ):
+                    changed += 1
+                    if changed >= row_threshold:
+                        bottom = y
+                        break
+            if bottom is not None:
+                break
+        if bottom is None:
+            return
+        crop_top = max(0, top - padding)
+        crop_bottom = min(height, bottom + padding + 1)
+        if crop_top == 0 and crop_bottom == height:
+            return
+        if crop_bottom - crop_top < 40:
+            return
+        cropped = image.crop((0, crop_top, width, crop_bottom))
+        cropped.save(path, format="PNG")
+        cropped.close()
+    finally:
+        image.close()
 
 
 def _save_chunk(

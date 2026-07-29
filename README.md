@@ -242,7 +242,7 @@ SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 
 `xhs_settings.cookies` 可粘贴 `www.xiaohongshu.com` 导出的 `cookies.txt` 内容，也兼容 `a=1; b=2` 形式的 Cookie 字符串。建议使用登录后的 Cookie，以便加载更多可见评论。
 
-首次使用网页截图模式前，运行环境通常还需要安装浏览器：`python -m playwright install chromium`。
+首次使用网页截图模式时，插件会自动尝试把 Chromium 安装到插件数据目录的 `playwright-browsers` 中；若自动安装失败或容器缺少系统运行库，会跳过评论截图并继续发送原有媒体。
 
 ### NGA Cookie 与帖子截图（可选）
 

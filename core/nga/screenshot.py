@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import re
 import logging
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+from ..common.playwright_manager import (
+    browser_channel_candidates,
+    configure_playwright_browser_path,
+    launch_chromium,
+)
 
 try:
     from astrbot.api import logger
@@ -161,6 +166,7 @@ class NgaScreenshotter:
         url = _normalize_nga_url(source_url)
         cookies = parse_nga_cookies(cookies_text)
 
+        configure_playwright_browser_path()
         async with async_playwright() as p:
             browser = await self._launch_browser(p)
             try:
@@ -194,31 +200,11 @@ class NgaScreenshotter:
                 await browser.close()
 
     async def _launch_browser(self, playwright):
-        try:
-            return await playwright.chromium.launch(headless=True)
-        except Exception as exc:
-            candidates = [
-                shutil.which("msedge"),
-                shutil.which("chrome"),
-                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            ]
-            for candidate in candidates:
-                if not candidate:
-                    continue
-                path = Path(candidate)
-                if not path.exists():
-                    continue
-                try:
-                    return await playwright.chromium.launch(
-                        headless=True,
-                        executable_path=str(path),
-                    )
-                except Exception:
-                    continue
-            raise exc
+        return await launch_chromium(
+            playwright,
+            headless=True,
+            fallback_executable_paths=browser_channel_candidates(),
+        )
 
     async def _prepare_capture(self, page) -> list[str]:
         image_urls = await page.evaluate(
