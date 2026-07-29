@@ -7,6 +7,7 @@ __all__ = [
     "get_cookies_path",
     "get_fonts_path",
     "get_bili_cookies_file",
+    "get_xhs_cookies_file",
     "get_bilibili_video_path",
     "get_bilibili_thumb_path",
     "get_bilibili_card_path",
@@ -43,6 +44,7 @@ from .paths import (
     get_weibo_video_path,
     get_xhs_card_path,
     get_xhs_comment_path,
+    get_xhs_cookies_file,
     get_xhs_image_path,
     get_xhs_video_path,
 )

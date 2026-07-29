@@ -191,6 +191,116 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.xhs_comment_screenshot_max, 0)
         self.assertEqual(plugin.xhs_comment_reply_screenshot_max, 0)
 
+    def test_refresh_config_writes_xhs_cookies_to_file(self):
+        plugin = LinkResolver.__new__(LinkResolver)
+        raw_cookies = "# Netscape HTTP Cookie File .xiaohongshu.com TRUE / TRUE 0 a1 v1"
+        plugin.config = {"xhs_settings": {"cookies": raw_cookies}}
+        plugin.font_auto_install_enabled = False
+        plugin.custom_primary_font_path = None
+        plugin.custom_emoji_font_path = None
+        plugin.weibo_extractor = type(
+            "WeiboExtractorStub",
+            (),
+            {
+                "set_cookie": lambda self, cookie: None,
+                "has_user_cookie": lambda self: False,
+            },
+        )()
+        plugin._get_config_value = LinkResolver._get_config_value.__get__(
+            plugin, LinkResolver
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cookies_file = Path(tmpdir) / "cookies" / "xhs_cookies.txt"
+            with (
+                patch.object(plugin, "_configure_managed_fonts", lambda: None),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.get_user_font_paths",
+                    return_value=ManagedFontPaths(primary=None, emoji=None),
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.get_managed_font_paths",
+                    return_value=ManagedFontPaths(primary=None, emoji=None),
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.find_default_font",
+                    return_value=None,
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.find_emoji_font",
+                    return_value=None,
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCardRenderer"
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCommentScreenshotter"
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.get_xhs_cookies_file",
+                    return_value=cookies_file,
+                ),
+            ):
+                LinkResolver._refresh_config(plugin)
+
+            self.assertTrue(cookies_file.exists())
+            self.assertIn("\n.xiaohongshu.com", cookies_file.read_text("utf-8"))
+
+    def test_refresh_config_reads_xhs_cookies_from_file_when_config_empty(self):
+        plugin = LinkResolver.__new__(LinkResolver)
+        plugin.config = {}
+        plugin.font_auto_install_enabled = False
+        plugin.custom_primary_font_path = None
+        plugin.custom_emoji_font_path = None
+        plugin.weibo_extractor = type(
+            "WeiboExtractorStub",
+            (),
+            {
+                "set_cookie": lambda self, cookie: None,
+                "has_user_cookie": lambda self: False,
+            },
+        )()
+        plugin._get_config_value = LinkResolver._get_config_value.__get__(
+            plugin, LinkResolver
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cookies_file = Path(tmpdir) / "cookies" / "xhs_cookies.txt"
+            cookies_file.parent.mkdir(parents=True)
+            cookies_file.write_text("a1=v1; web_session=abc", encoding="utf-8")
+            with (
+                patch.object(plugin, "_configure_managed_fonts", lambda: None),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.get_user_font_paths",
+                    return_value=ManagedFontPaths(primary=None, emoji=None),
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.get_managed_font_paths",
+                    return_value=ManagedFontPaths(primary=None, emoji=None),
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.find_default_font",
+                    return_value=None,
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.find_emoji_font",
+                    return_value=None,
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCardRenderer"
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCommentScreenshotter"
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.get_xhs_cookies_file",
+                    return_value=cookies_file,
+                ),
+            ):
+                LinkResolver._refresh_config(plugin)
+
+        self.assertEqual(plugin.xhs_cookies, "a1=v1; web_session=abc")
+
     async def test_capture_xhs_comment_screenshots_passes_reply_limit(self):
         screenshotter = SimpleNamespace(capture=AsyncMock(return_value=[]))
         plugin = SimpleNamespace(

@@ -84,7 +84,7 @@
             "cookies": {
                 "description": "B站Cookies",
                 "type": "string",
-                "hint": "粘贴导出的 Cookie 字符串（可选）。填写后可下载更高画质。留空则使用游客模式。",
+                "hint": "可选。使用 Get cookies.txt LOCALLY 插件的 Copy 粘贴 cookies.txt 内容；填写后会自动保存到 cookies/bili_cookies.txt，也可用 Export 手动导出到该路径。留空则使用游客模式。",
                 "default": ""
             }
         }
@@ -266,7 +266,7 @@
             "cookies": {
                 "description": "小红书Cookies",
                 "type": "string",
-                "hint": "可选。粘贴 www.xiaohongshu.com 导出的 cookies.txt 文本或 k=v;... Cookie 字符串，用于加载登录态评论。留空则仅尝试公开可见评论。",
+                "hint": "可选。使用 Get cookies.txt LOCALLY 插件的 Copy 粘贴 www.xiaohongshu.com 的 cookies.txt 内容；填写后会自动保存到 cookies/xhs_cookies.txt，也可用 Export 手动导出到该路径。留空则仅尝试公开可见评论。",
                 "default": ""
             }
         }

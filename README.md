@@ -186,23 +186,26 @@ data/plugin_data/astrbot_plugin_link_resolver/
 
 ## 🍪 Cookies 配置（可选）
 
-填写 B 站 Cookie 可解锁更高画质（如 1080P60、4K）。
+填写 B 站 Cookie 可解锁更高画质（如 1080P60、4K）。小红书 Cookie 可用于加载登录态可见评论。
 
 ### 方式一：管理面板配置（推荐）
 
-1. 安装浏览器插件 [Cookies txt](https://microsoftedge.microsoft.com/addons/detail/cookies-txt/dilbcaaegopfblcjdjikanigjbcbngbk?)
+1. 安装浏览器插件 [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
 2. 打开 [bilibili.com](https://www.bilibili.com) 并登录
-3. 点击插件的 **Load Cookies**，复制全部内容
+3. 点击插件的 **Copy**，复制当前站点的 cookies.txt 内容
 4. 在 AstrBot 管理面板 → 插件配置 → **B站Cookies** 粘贴
+5. 保存配置并重载插件后，内容会自动写入方式二对应路径
 
 ![获取cookie的插件](docs/images/image.png)
 
-![点击 Load Cookies](docs/images/image-1.png)
+![点击 Copy 或 Export](docs/images/image-1.png)
 
 ### 方式二：手动放置文件
 
-将 Cookie 内容保存到 AstrBot 数据目录下的
-`data/plugin_data/astrbot_plugin_link_resolver/cookies/bili_cookies.txt`。插件会自动创建目录。
+在 [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) 中点击 **Export**，或把 Cookie 内容手动保存到 AstrBot 数据目录下的对应文件。插件会自动创建目录。
+
+- B站：`data/plugin_data/astrbot_plugin_link_resolver/cookies/bili_cookies.txt`
+- 小红书：`data/plugin_data/astrbot_plugin_link_resolver/cookies/xhs_cookies.txt`
 
 ### 微博 Cookie（可选）
 
@@ -220,6 +223,8 @@ SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 小红书评论截图默认关闭。开启 `xhs_settings.enable_comment_screenshot` 后，插件会尝试用 Playwright 打开笔记页面并截图评论；若运行环境没有可用 Chromium/Edge，或页面风控导致评论不可见，会跳过评论截图并继续发送原有媒体。
 
 顶层评论受 `xhs_settings.comment_screenshot_max` 控制；楼中楼受 `xhs_settings.comment_reply_screenshot_max` 控制，默认每条顶层评论展示前 5 条，且不计入顶层评论总数。两个配置都支持 `0` 表示不限制。
+
+小红书 Cookies 获取方式参考上面的方式一和方式二：打开 [xiaohongshu.com](https://www.xiaohongshu.com) 并登录，使用 **Copy** 粘贴到 `xhs_settings.cookies`，或使用 **Export** 导出后保存为 `cookies/xhs_cookies.txt`。方式一保存配置并重载后，也会自动把内容保存到方式二对应路径。
 
 `xhs_settings.cookies` 可粘贴 `www.xiaohongshu.com` 导出的 `cookies.txt` 内容，也兼容 `a=1; b=2` 形式的 Cookie 字符串。建议使用登录后的 Cookie，以便加载更多可见评论。
 

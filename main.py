@@ -16,7 +16,11 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
 from .core.bilibili import BILI_MESSAGE_PATTERN, BilibiliMixin
-from .core.common import SizeLimitExceeded, get_bili_cookies_file
+from .core.common import (
+    SizeLimitExceeded,
+    get_bili_cookies_file,
+    get_xhs_cookies_file,
+)
 from .core.common.card_renderer import find_default_font, find_emoji_font
 from .core.common.font_manager import (
     get_managed_font_paths,
@@ -275,12 +279,45 @@ class LinkResolverPlugin(
             ),
         )
         _xhs_comment_mode = str(
-            self._get_config_value("xhs_settings.comment_screenshot_mode", COMMENT_MODE_WEB)
+            self._get_config_value(
+                "xhs_settings.comment_screenshot_mode", COMMENT_MODE_WEB
+            )
         ).strip()
         self.xhs_comment_screenshot_mode = (
-            _xhs_comment_mode if _xhs_comment_mode in XHS_COMMENT_MODES else COMMENT_MODE_WEB
+            _xhs_comment_mode
+            if _xhs_comment_mode in XHS_COMMENT_MODES
+            else COMMENT_MODE_WEB
         )
         self.xhs_cookies = str(self._get_config_value("xhs_settings.cookies", "")).strip()
+        xhs_cookies_file = get_xhs_cookies_file()
+        if self.xhs_cookies:
+            try:
+                xhs_cookies_file.parent.mkdir(parents=True, exist_ok=True)
+                # 恢复 Netscape 格式的换行符（网页配置粘贴时可能丢失）
+                if (
+                    "\n" not in self.xhs_cookies
+                    and ".xiaohongshu.com" in self.xhs_cookies
+                ):
+                    self.xhs_cookies = re.sub(
+                        r"\s+(\.?(?:www\.)?xiaohongshu\.com\s)",
+                        r"\n\1",
+                        self.xhs_cookies,
+                    )
+                    self.xhs_cookies = self.xhs_cookies.replace("# ", "\n# ").strip()
+                xhs_cookies_file.write_text(self.xhs_cookies, encoding="utf-8")
+                logger.info("🍪 小红书 Cookie 已从配置写入文件")
+            except Exception as exc:
+                logger.warning("⚠️ 写入小红书 Cookie 文件失败: %s", str(exc))
+        else:
+            try:
+                if xhs_cookies_file.exists():
+                    self.xhs_cookies = xhs_cookies_file.read_text(
+                        encoding="utf-8"
+                    ).strip()
+                    if self.xhs_cookies:
+                        logger.info("🍪 使用文件读取小红书 Cookie: %s", xhs_cookies_file)
+            except Exception as exc:
+                logger.warning("⚠️ 读取小红书 Cookie 文件失败: %s", str(exc))
 
         # 通用配置
         self.retry_count = max(
