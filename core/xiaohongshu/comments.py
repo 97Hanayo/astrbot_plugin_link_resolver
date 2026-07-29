@@ -173,7 +173,7 @@ class XiaohongshuCommentScreenshotter:
                             request_id,
                         )
                     return await self._capture_web_comments(
-                        locator, count, output_dir, request_id
+                        page, locator, count, output_dir, request_id
                     )
                 finally:
                     await context.close()
@@ -184,12 +184,88 @@ class XiaohongshuCommentScreenshotter:
         await page.evaluate(
             """
             () => {
-              for (const selector of ['.login-container', '.mask', '.modal', '[class*=login]']) {
+              const isVisible = (el) => {
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return (
+                  style.display !== 'none' &&
+                  style.visibility !== 'hidden' &&
+                  rect.width > 0 &&
+                  rect.height > 0
+                );
+              };
+              const clickCloseButton = (root) => {
+                const closers = Array.from(
+                  root.querySelectorAll('button, a, svg, use, span, div')
+                ).filter((el) => {
+                  const text = (el.innerText || el.textContent || '').trim();
+                  const label = [
+                    el.getAttribute('aria-label'),
+                    el.getAttribute('title'),
+                    el.getAttribute('class'),
+                    el.getAttribute('xlink:href'),
+                    el.getAttribute('href'),
+                  ].filter(Boolean).join(' ');
+                  if (!/(关闭|close|cancel|modal-close|icon-close|close-circle|dismiss)/i.test(text + ' ' + label)) {
+                    return false;
+                  }
+                  return isVisible(el);
+                });
+                for (const closer of closers.slice(0, 5)) {
+                  try {
+                    closer.click();
+                    return true;
+                  } catch (_) {}
+                }
+                return false;
+              };
+              const obstructionSelectors = [
+                '.login-container',
+                '.login-mask',
+                '.login-modal',
+                '.login-wrapper',
+                '.mask',
+                '.modal',
+                '[class*=login-container]',
+                '[class*=login-modal]',
+                '[class*=login-wrapper]',
+                '[class*=loginMask]',
+                '[class*=Login]',
+                '[class*=login]',
+              ];
+              for (const selector of obstructionSelectors) {
                 document.querySelectorAll(selector).forEach((el) => {
+                  if (!isVisible(el)) return;
                   const style = window.getComputedStyle(el);
-                  if (style.position === 'fixed' || style.position === 'absolute') el.remove();
+                  if (clickCloseButton(el)) return;
+                  if (style.position === 'fixed' || style.position === 'absolute') {
+                    el.remove();
+                  }
                 });
               }
+              Array.from(document.body.querySelectorAll('*')).forEach((el) => {
+                if (!isVisible(el)) return;
+                const style = window.getComputedStyle(el);
+                if (style.position !== 'fixed') return;
+                const rect = el.getBoundingClientRect();
+                const text = (el.innerText || el.textContent || '').trim();
+                const cls = String(el.className || '');
+                const zIndex = Number.parseInt(style.zIndex || '0', 10) || 0;
+                const coversScreen =
+                  rect.width >= window.innerWidth * 0.45 &&
+                  rect.height >= window.innerHeight * 0.25;
+                const looksLikeLogin =
+                  /(登录|注册|扫码|验证码|手机号|小红书账号|login|signin|sign-in)/i.test(text + ' ' + cls);
+                const looksLikeMask =
+                  coversScreen &&
+                  (zIndex >= 10 || /mask|modal|overlay/i.test(cls)) &&
+                  !el.querySelector('.parent-comment, .comment-item, [class*=comment-item]');
+                if (looksLikeLogin || looksLikeMask) {
+                  if (!clickCloseButton(el)) el.remove();
+                }
+              });
+              document.documentElement.style.overflow = '';
+              document.body.style.overflow = '';
             }
             """
         )
@@ -200,6 +276,7 @@ class XiaohongshuCommentScreenshotter:
         stagnant_rounds = 0
         max_rounds = _MAX_SCROLL_ROUNDS_UNLIMITED if max_comments == 0 else _MAX_SCROLL_ROUNDS_LIMITED
         for _ in range(max_rounds):
+            await self._dismiss_obstructions(page)
             count = await locator.count()
             if max_comments > 0 and count >= max_comments:
                 break
@@ -223,6 +300,7 @@ class XiaohongshuCommentScreenshotter:
                 """
             )
             await page.wait_for_timeout(700)
+            await self._dismiss_obstructions(page)
             locator = await self._pick_comment_locator(page)
         return locator
 
@@ -274,6 +352,7 @@ class XiaohongshuCommentScreenshotter:
         max_replies_per_comment: int,
     ) -> None:
         for index in range(count):
+            await self._dismiss_obstructions(page)
             item = locator.nth(index)
             await item.scroll_into_view_if_needed(timeout=5000)
             handle = await item.element_handle(timeout=5000)
@@ -283,19 +362,31 @@ class XiaohongshuCommentScreenshotter:
                 clicked = await page.evaluate(
                     """
                     (root) => {
-                      const clickable = Array.from(
+                      const candidates = Array.from(
                         root.querySelectorAll('button, a, span, div')
-                      ).find((el) => {
+                      ).map((el) => {
                         const text = (el.innerText || el.textContent || '').trim();
-                        if (!text) return false;
-                        if (!/(展开|更多|查看|回复)/.test(text)) return false;
+                        const compactText = text.replace(/\\s+/g, '');
+                        const exactReplyExpand = /^展开\\d+条回复$/.test(compactText);
+                        const replyExpand = exactReplyExpand || /^(展开|查看|更多).{0,12}回复$/.test(compactText);
                         const style = window.getComputedStyle(el);
-                        if (style.display === 'none' || style.visibility === 'hidden') return false;
                         const rect = el.getBoundingClientRect();
-                        return rect.width > 0 && rect.height > 0;
+                        return {el, text, exactReplyExpand, replyExpand, style, rect};
+                      }).filter((item) => {
+                        if (!item.replyExpand) return false;
+                        if (item.style.display === 'none' || item.style.visibility === 'hidden') return false;
+                        return item.rect.width > 0 && item.rect.height > 0;
+                      }).sort((a, b) => {
+                        if (a.exactReplyExpand !== b.exactReplyExpand) {
+                          return a.exactReplyExpand ? -1 : 1;
+                        }
+                        return (a.rect.width * a.rect.height) - (b.rect.width * b.rect.height);
                       });
+                      const clickable = candidates[0]?.el;
                       if (!clickable) return false;
-                      clickable.click();
+                      const target = clickable.closest('button, a') || clickable;
+                      target.scrollIntoView({block: 'center', inline: 'nearest'});
+                      target.click();
                       return true;
                     }
                     """,
@@ -304,6 +395,7 @@ class XiaohongshuCommentScreenshotter:
                 if not clicked:
                     break
                 await page.wait_for_timeout(450)
+                await self._dismiss_obstructions(page)
             await handle.evaluate(
                 """
                 (root, maxReplies) => {
@@ -338,6 +430,7 @@ class XiaohongshuCommentScreenshotter:
 
     async def _capture_web_comments(
         self,
+        page,
         locator,
         count: int,
         output_dir: Path,
@@ -350,6 +443,7 @@ class XiaohongshuCommentScreenshotter:
                 path = temp_root / f"comment_{index:03d}.png"
                 item = locator.nth(index)
                 await item.scroll_into_view_if_needed(timeout=5000)
+                await self._dismiss_obstructions(page)
                 await item.screenshot(path=str(path), timeout=10000)
                 fragments.append(path)
             return await asyncio.to_thread(
