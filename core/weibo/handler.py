@@ -190,6 +190,8 @@ class WeiboMixin:
 
         summary_text = self._build_weibo_summary(result)
         media_components: list[object] = []
+        chat_record_components: list[object] = []
+        standalone_video_components: list[object] = []
         media_paths: list[Path] = []
         failed_images = 0
 
@@ -200,7 +202,9 @@ class WeiboMixin:
                     result.video_url, request_id
                 )
                 media_paths.append(video_path)
-                media_components.append(Video.fromFileSystem(str(video_path.resolve())))
+                component = Video.fromFileSystem(str(video_path.resolve()))
+                media_components.append(component)
+                standalone_video_components.append(component)
             except asyncio.CancelledError:
                 raise
             except SizeLimitExceeded:
@@ -219,9 +223,9 @@ class WeiboMixin:
                 try:
                     image_path = await self._download_weibo_image(url, request_id)
                     media_paths.append(image_path)
-                    media_components.append(
-                        Image.fromFileSystem(str(image_path.resolve()))
-                    )
+                    component = Image.fromFileSystem(str(image_path.resolve()))
+                    media_components.append(component)
+                    chat_record_components.append(component)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -245,23 +249,35 @@ class WeiboMixin:
 
         is_image_post = bool(result.image_urls and not result.video_url)
         enable_merge_send = is_image_post or self.weibo_merge_send
+        has_video = bool(standalone_video_components)
+        should_send_chat_record = enable_merge_send and (
+            bool(summary_text) or bool(chat_record_components)
+        )
 
         try:
             send_start = time.perf_counter()
-            if enable_merge_send:
+            if should_send_chat_record:
                 nodes = Nodes([])
                 sender_uin = self._get_merge_sender_uin(event)
                 if summary_text:
                     nodes.nodes.append(
                         Node(uin=sender_uin, content=[Plain(summary_text)])
                     )
-                for component in media_components:
+                for component in chat_record_components:
                     merge_component = await self._prepare_component_for_merge_send(
                         component
                     )
                     nodes.nodes.append(Node(uin=sender_uin, content=[merge_component]))
                 await event.send(MessageChain([nodes]))
-            else:
+                if has_video:
+                    await asyncio.sleep(1.0)
+
+            if has_video:
+                for component in standalone_video_components:
+                    await event.send(MessageChain([component]))
+                    if component is not standalone_video_components[-1]:
+                        await asyncio.sleep(1.0)
+            elif not should_send_chat_record:
                 await event.send(MessageChain([media_components[0]]))
 
             timing["send"] = time.perf_counter() - send_start

@@ -947,6 +947,14 @@ class XiaohongshuMixin:
             return component
 
         media_components = [_convert_to_file_if_needed(c) for c in media_components]
+        standalone_video_components = [
+            component for component in media_components if isinstance(component, Video)
+        ]
+        chat_record_components = [
+            component
+            for component in media_components
+            if not isinstance(component, Video)
+        ]
 
         # 计算总大小
         total_size_bytes = await asyncio.to_thread(
@@ -981,12 +989,20 @@ class XiaohongshuMixin:
             sender_uin = self._get_merge_sender_uin(event)
             if summary_text:
                 nodes.nodes.append(Node(uin=sender_uin, content=[Plain(summary_text)]))
-            for component in media_components:
+            for component in chat_record_components:
                 merge_component = await self._prepare_component_for_merge_send(
                     component
                 )
                 nodes.nodes.append(Node(uin=sender_uin, content=[merge_component]))
-            yield event.chain_result([nodes])
+            if nodes.nodes:
+                yield event.chain_result([nodes])
+            if standalone_video_components:
+                if nodes.nodes:
+                    await asyncio.sleep(2.0)
+                for i, component in enumerate(standalone_video_components):
+                    yield event.chain_result([component])
+                    if i < len(standalone_video_components) - 1:
+                        await asyncio.sleep(2.0)
         else:
             if is_image_post:
                 # 图文笔记逐条发送（触发解合阈值时）

@@ -289,6 +289,8 @@ class DouyinMixin:
             return
 
         media_components: list[object] = []
+        chat_record_components: list[object] = []
+        standalone_video_components: list[object] = []
         media_paths: list[Path] = []
         failed_images = 0
         failed_dynamics = 0
@@ -312,9 +314,9 @@ class DouyinMixin:
                     img_start = time.perf_counter()
                     image_path = await self._download_douyin_image(url, request_id)
                     media_paths.append(image_path)
-                    media_components.append(
-                        Image.fromFileSystem(str(image_path.resolve()))
-                    )
+                    component = Image.fromFileSystem(str(image_path.resolve()))
+                    media_components.append(component)
+                    chat_record_components.append(component)
                     logger.debug(
                         "📥 抖音图片下载成功%s [%d/%d]: size=%.1fKB, 耗时=%.2fs",
                         source_tag,
@@ -340,9 +342,9 @@ class DouyinMixin:
                     dyn_start = time.perf_counter()
                     video_path = await self._download_douyin_video(url, request_id)
                     media_paths.append(video_path)
-                    media_components.append(
-                        Video.fromFileSystem(str(video_path.resolve()))
-                    )
+                    component = Video.fromFileSystem(str(video_path.resolve()))
+                    media_components.append(component)
+                    standalone_video_components.append(component)
                     logger.debug(
                         "📥 抖音动图下载成功%s [%d/%d]: size=%.2fMB, 耗时=%.2fs",
                         source_tag,
@@ -378,7 +380,9 @@ class DouyinMixin:
                     result.video_url, request_id
                 )
                 media_paths.append(video_path)
-                media_components.append(Video.fromFileSystem(str(video_path.resolve())))
+                component = Video.fromFileSystem(str(video_path.resolve()))
+                media_components.append(component)
+                standalone_video_components.append(component)
                 logger.debug(
                     "📥 抖音视频下载成功%s: size=%.2fMB, 耗时=%.2fs",
                     source_tag,
@@ -424,6 +428,7 @@ class DouyinMixin:
         # 图文笔记始终合并转发；视频笔记根据配置决定
         enable_merge_send = is_image_post or getattr(self, "douyin_merge_send", True)
         render_card = getattr(self, "douyin_render_card", False)
+        has_video = bool(standalone_video_components)
         summary_text = None
         if enable_merge_send and not render_card:
             summary_text = self._build_douyin_summary(
@@ -452,7 +457,13 @@ class DouyinMixin:
         # region 发送阶段
         send_start = time.perf_counter()
 
-        if enable_merge_send:
+        should_send_chat_record = enable_merge_send and (
+            bool(summary_text)
+            or bool(chat_record_components)
+            or bool(card_path and card_path.exists())
+        )
+
+        if should_send_chat_record:
             # 合并转发：摘要 + 媒体
             nodes = Nodes([])
             sender_uin = self._get_merge_sender_uin(event)
@@ -467,7 +478,7 @@ class DouyinMixin:
                     )
                 )
 
-            for component in media_components:
+            for component in chat_record_components:
                 merge_component = await self._prepare_component_for_merge_send(
                     component
                 )
@@ -477,7 +488,15 @@ class DouyinMixin:
                 "🚀 抖音合并消息准备发送%s: 节点数=%d", source_tag, len(nodes.nodes)
             )
             await event.send(MessageChain([nodes]))
-        else:
+            if has_video:
+                await asyncio.sleep(1.0)
+
+        if has_video:
+            for component in standalone_video_components:
+                await event.send(MessageChain([component]))
+                if component is not standalone_video_components[-1]:
+                    await asyncio.sleep(1.0)
+        elif not should_send_chat_record:
             # 非合并转发（仅视频笔记可能走到这里）：只发送单独视频
             logger.debug(
                 "🚀 抖音普通消息准备发送%s: 媒体数=%d",
