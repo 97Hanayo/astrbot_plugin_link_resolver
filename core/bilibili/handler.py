@@ -950,6 +950,19 @@ class BilibiliMixin:
             lines.append(f"链接：{source_url}")
         return "\n".join(lines)
 
+    @staticmethod
+    def _build_bili_video_intro_text(
+        title: str,
+        description: str | None = None,
+        source_url: str | None = None,
+    ) -> str:
+        lines = [f"标题：{title.strip() or 'Bilibili video'}"]
+        if description and description.strip():
+            lines.append(f"简介：{description.strip()}")
+        if source_url and source_url.strip():
+            lines.append(f"链接：{source_url.strip()}")
+        return "\n".join(lines)
+
     async def _render_bili_card(
         self,
         *,
@@ -1055,6 +1068,7 @@ class BilibiliMixin:
                 return
 
             title = info.get("title", "未知标题")
+            description = str(info.get("desc") or "").strip()
             up_name = info.get("owner", {}).get("name", "未知UP主")
             duration_seconds = info.get("duration", 0)
             view_count = stat.get("view", 0)
@@ -1130,6 +1144,14 @@ class BilibiliMixin:
 
             video_paths: list[Path] = []
             thumbnail_paths: list[Path] = []
+            video_link = ref.source_url
+            if not video_link:
+                video_id = ref.bvid or (f"av{ref.avid}" if ref.avid else None)
+                if video_id:
+                    video_link = f"https://www.bilibili.com/video/{video_id}"
+            intro_text = BilibiliMixin._build_bili_video_intro_text(
+                title, description, video_link
+            )
 
             # region 下载阶段
             download_start = time.perf_counter()
@@ -1225,6 +1247,7 @@ class BilibiliMixin:
                 send_start = time.perf_counter()
                 for path in video_paths:
                     self._assert_video_file_ready(path, source_tag, request_id)
+                await event.send(MessageChain([Plain(intro_text)]))
                 await event.send(MessageChain([nodes]))
                 timing["send"] = time.perf_counter() - send_start
                 # endregion
@@ -1357,10 +1380,12 @@ class BilibiliMixin:
                         source_tag,
                         len(nodes.nodes),
                     )
+                    await event.send(MessageChain([Plain(intro_text)]))
                     await event.send(MessageChain([nodes]))
                 else:
-                    # 非合并转发：只发视频
+                    # 非合并转发：先发视频信息，再发视频文件。
                     logger.debug("🚀 B站普通消息准备发送%s", source_tag)
+                    await event.send(MessageChain([Plain(intro_text)]))
                     await event.send(MessageChain([video_component]))
 
                 timing["send"] = time.perf_counter() - send_start

@@ -286,7 +286,12 @@ class TestSummaryModeHandlers(unittest.IsolatedAsyncioTestCase):
                 _get_video_info=AsyncMock(
                     return_value={
                         "bvid": "BV1xx411c7mD",
-                        "title": "B站标题",
+                        "title": "当代大龄主机玩家现状~",
+                        "desc": (
+                            "欢迎关注汪酱的微信公众号：汪酱游戏，\n"
+                            "淘宝店铺：汪酱的店，也欢迎大家来走一走看一看~\n"
+                            "商务合作WX :WangJiang-Game"
+                        ),
                         "owner": {"name": "UP主甲"},
                         "duration": 125,
                         "stat": {
@@ -332,12 +337,22 @@ class TestSummaryModeHandlers(unittest.IsolatedAsyncioTestCase):
                 )
 
         plugin._render_bili_card.assert_not_awaited()
-        self.assertEqual(len(event.sent), 1)
-        nodes = event.sent[0].chain[0]
+        self.assertEqual(len(event.sent), 2)
+        title_component = event.sent[0].chain[0]
+        self.assertIsInstance(title_component, Plain)
+        self.assertIn("标题：当代大龄主机玩家现状~", title_component.text)
+        self.assertIn("简介：欢迎关注汪酱的微信公众号", title_component.text)
+        self.assertIn("淘宝店铺：汪酱的店", title_component.text)
+        self.assertIn("商务合作WX :WangJiang-Game", title_component.text)
+        self.assertIn(
+            "链接：https://www.bilibili.com/video/BV1xx411c7mD",
+            title_component.text,
+        )
+        nodes = event.sent[1].chain[0]
         first_component = nodes.nodes[0].content[0]
         self.assertIsInstance(first_component, Plain)
         self.assertIn("🎬 B站", first_component.text)
-        self.assertIn("标题：B站标题", first_component.text)
+        self.assertIn("标题：当代大龄主机玩家现状~", first_component.text)
         self.assertIn("UP主：UP主甲", first_component.text)
         self.assertIn("播放：1.2万", first_component.text)
         self.assertIn("点赞：678", first_component.text)
@@ -349,6 +364,89 @@ class TestSummaryModeHandlers(unittest.IsolatedAsyncioTestCase):
             "链接：https://www.bilibili.com/video/BV1xx411c7mD", first_component.text
         )
         self.assertNotIn("链接：https://b23.tv/", first_component.text)
+
+    async def test_process_bili_single_page_non_merge_sends_title_before_video(self):
+        event = DummyEvent()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video_path = Path(tmpdir) / "demo.mp4"
+            video_path.write_bytes(b"video")
+
+            plugin = SimpleNamespace(
+                bili_enabled=True,
+                bili_render_card=False,
+                bili_merge_send=False,
+                enable_multi_page=True,
+                multi_page_max=3,
+                bili_max_duration_seconds=300,
+                quality_label="1080P高帧率",
+                retry_count=0,
+                error_notify_mode="静默",
+                _refresh_config=lambda: None,
+                _send_reaction_emoji=AsyncMock(),
+                _load_cookies=lambda: None,
+                _build_credential=lambda cookies: object(),
+                _check_cookie_status=AsyncMock(
+                    return_value=SimpleNamespace(
+                        is_login=False,
+                        is_vip=False,
+                        vip_type=0,
+                        message="游客",
+                    )
+                ),
+                _get_video_info=AsyncMock(
+                    return_value={
+                        "bvid": "BV1xx411c7mD",
+                        "title": "当代大龄主机玩家现状~",
+                        "desc": (
+                            "欢迎关注汪酱的微信公众号：汪酱游戏，\n"
+                            "淘宝店铺：汪酱的店，也欢迎大家来走一走看一看~\n"
+                            "商务合作WX :WangJiang-Game"
+                        ),
+                        "owner": {"name": "UP主甲"},
+                        "duration": 125,
+                        "stat": {},
+                        "pic": "https://example.com/cover.jpg",
+                        "pages": [{"part": "P1", "duration": 125}],
+                    }
+                ),
+                _download_video=AsyncMock(return_value=(video_path, "1080P")),
+                _assert_video_file_ready=lambda path, *_: path.stat().st_size,
+                _render_bili_card=AsyncMock(),
+                _prepare_component_for_merge_send=AsyncMock(),
+                _get_merge_sender_uin=lambda event: "10001",
+                calculate_md5=AsyncMock(return_value="abc"),
+                download_thumbnail=AsyncMock(return_value=False),
+                cleanup_files=AsyncMock(),
+            )
+
+            with patch(
+                "data.plugins.astrbot_plugin_link_resolver.core.bilibili.handler.video.Video",
+                return_value=object(),
+            ):
+                await BilibiliMixin._process_bili_video(
+                    plugin,
+                    event,
+                    VideoRef(
+                        bvid="BV1xx411c7mD",
+                        avid=None,
+                        page_index=0,
+                        source_url="https://www.bilibili.com/video/BV1xx411c7mD",
+                    ),
+                )
+
+        self.assertEqual(len(event.sent), 2)
+        title_component = event.sent[0].chain[0]
+        self.assertIsInstance(title_component, Plain)
+        self.assertIn("标题：当代大龄主机玩家现状~", title_component.text)
+        self.assertIn("简介：欢迎关注汪酱的微信公众号", title_component.text)
+        self.assertIn("淘宝店铺：汪酱的店", title_component.text)
+        self.assertIn("商务合作WX :WangJiang-Game", title_component.text)
+        self.assertIn(
+            "链接：https://www.bilibili.com/video/BV1xx411c7mD",
+            title_component.text,
+        )
+        plugin._prepare_component_for_merge_send.assert_not_awaited()
+        plugin.cleanup_files.assert_awaited_once_with([video_path], [])
 
     async def test_process_bili_duration_limit_result_includes_video_link(self):
         event = DummyEvent()
