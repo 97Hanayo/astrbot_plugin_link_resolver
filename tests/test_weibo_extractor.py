@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 for candidate in Path(__file__).resolve().parents:
     if (candidate / "data" / "plugins").exists():
@@ -73,6 +74,33 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.text, "完整正文\\n第二行")
         self.assertEqual(result.image_urls, ["https://wx4.sinaimg.cn/large/pic1.jpg"])
         self.assertIsNone(result.video_url)
+
+    async def test_hydrates_missing_long_text(self):
+        extractor = WeiboExtractor()
+        status = {
+            "id": "1234567890123456",
+            "mblogid": "AbCdEfGhI",
+            "user": {"screen_name": "博主甲"},
+            "isLongText": True,
+            "text_raw": "这是短正文...展开全文",
+            "pic_ids": ["pic1"],
+            "pic_infos": {
+                "pic1": {"large": {"url": "https://wx4.sinaimg.cn/orj960/pic1.jpg"}}
+            },
+        }
+        extractor._fetch_long_text_json = AsyncMock(
+            return_value={"longTextContent": "这是完整正文，后半段不会丢。"}
+        )
+
+        await extractor._hydrate_long_texts(status, {"SUB": "foo"})
+        result = extractor._build_result(
+            status, "https://weibo.com/1234567890/AbCdEfGhI"
+        )
+
+        extractor._fetch_long_text_json.assert_awaited_once_with(
+            "AbCdEfGhI", {"SUB": "foo"}
+        )
+        self.assertEqual(result.text, "这是完整正文，后半段不会丢。")
 
     def test_build_result_picks_highest_bitrate_video(self):
         extractor = WeiboExtractor()

@@ -285,7 +285,132 @@ class WeiboExtractor:
             raise WeiboParseError(data.get("msg") or "微博详情接口返回失败")
         if not data.get("id") and not data.get("mblogid"):
             raise WeiboParseError("微博详情缺少关键字段")
+        await self._hydrate_long_texts(data, cookies)
         return data
+
+    async def _fetch_long_text_json(
+        self, weibo_id: str, cookies: dict[str, str]
+    ) -> dict[str, Any] | None:
+        params = {"id": weibo_id}
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                headers=WEIBO_API_HEADERS,
+                cookies=cookies,
+                follow_redirects=True,
+            ) as client:
+                response = await client.get(
+                    "https://weibo.com/ajax/statuses/longtext", params=params
+                )
+        except asyncio.TimeoutError as exc:
+            raise WeiboRetryableError("微博长文请求超时") from exc
+        except httpx.HTTPError as exc:
+            raise WeiboRetryableError(f"微博长文网络异常: {exc}") from exc
+
+        text = response.text or ""
+        content_type = response.headers.get("Content-Type", "")
+        if response.status_code == 404:
+            return None
+        if response.status_code in (401, 403):
+            raise WeiboAuthError(f"微博长文鉴权失败: {response.status_code}")
+        if response.status_code >= 500:
+            raise WeiboRetryableError(f"微博长文临时失败: {response.status_code}")
+        if "Sina Visitor System" in text:
+            raise WeiboAuthError("微博长文要求访问凭证")
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            if "json" not in content_type.lower():
+                raise WeiboAuthError("微博长文返回非 JSON 页面") from exc
+            raise WeiboParseError("微博长文 JSON 解析失败") from exc
+
+        if not isinstance(data, dict):
+            raise WeiboParseError("微博长文响应结构异常")
+        if data.get("ok") == 0:
+            return None
+        payload = data.get("data") if isinstance(data.get("data"), dict) else data
+        return payload if isinstance(payload, dict) else None
+
+    async def _hydrate_long_texts(
+        self, status: dict[str, Any], cookies: dict[str, str]
+    ) -> None:
+        await self._hydrate_long_text(status, cookies)
+        retweeted_status = status.get("retweeted_status")
+        if isinstance(retweeted_status, dict):
+            await self._hydrate_long_text(retweeted_status, cookies)
+
+    async def _hydrate_long_text(
+        self, status: dict[str, Any], cookies: dict[str, str]
+    ) -> None:
+        if not self._status_needs_long_text(status):
+            return
+
+        long_text_ids = self._extract_status_long_text_ids(status)
+        if not long_text_ids:
+            return
+
+        payload = None
+        for long_text_id in long_text_ids:
+            try:
+                payload = await self._fetch_long_text_json(long_text_id, cookies)
+            except WeiboParseError as exc:
+                logger.debug("微博长文补全失败(id=%s): %s", long_text_id, exc)
+                continue
+            if payload:
+                break
+
+        if payload is None:
+            return
+
+        for key in (
+            "longTextContent_raw",
+            "longTextContent",
+            "text_raw",
+            "text",
+        ):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                status["longTextContent_raw"] = value
+                if not isinstance(status.get("longText"), dict):
+                    status["longText"] = {}
+                status["longText"]["longTextContent_raw"] = value
+                return
+
+    def _status_needs_long_text(self, status: dict[str, Any]) -> bool:
+        if not isinstance(status, dict):
+            return False
+        if self._extract_text_from_long_fields(status):
+            return False
+        text = str(status.get("text_raw") or status.get("text") or "")
+        return bool(status.get("isLongText") or "展开全文" in text)
+
+    @staticmethod
+    def _extract_text_from_long_fields(status: dict[str, Any]) -> str | None:
+        long_text = status.get("longText")
+        if not isinstance(long_text, dict):
+            long_text = {}
+        for candidate in (
+            status.get("longTextContent_raw"),
+            status.get("longTextContent"),
+            long_text.get("longTextContent_raw"),
+            long_text.get("longTextContent"),
+        ):
+            cleaned = WeiboExtractor._clean_text(candidate)
+            if cleaned:
+                return cleaned
+        return None
+
+    @staticmethod
+    def _extract_status_long_text_ids(status: dict[str, Any]) -> list[str]:
+        ids: list[str] = []
+        for key in ("mblogid", "bid", "idstr", "id"):
+            value = status.get(key)
+            if value:
+                text = str(value)
+                if text and text not in ids:
+                    ids.append(text)
+        return ids
 
     @staticmethod
     def _parse_cookie_header(raw: str | None) -> dict[str, str]:
@@ -493,10 +618,7 @@ class WeiboExtractor:
         if not isinstance(status, dict):
             return None
         candidates = [
-            status.get("longTextContent_raw"),
-            status.get("longTextContent"),
-            (status.get("longText") or {}).get("longTextContent_raw"),
-            (status.get("longText") or {}).get("longTextContent"),
+            self._extract_text_from_long_fields(status),
             status.get("text_raw"),
             status.get("text"),
         ]
