@@ -62,6 +62,30 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(cookies, {"SUB": "weibo-sub", "SUBP": "weibo-subp"})
 
+    def test_parse_netscape_cookies_does_not_fall_back_to_multiline_header(self):
+        raw = "\n".join(
+            [
+                "# Netscape HTTP Cookie File",
+                ".weibo.cn\tTRUE\t/\tTRUE\t0\tSUB\tmobile-sub",
+                "",
+                "# Netscape HTTP Cookie File",
+                ".weibo.com\tTRUE\t/\tTRUE\t0\tSUB\tpc-sub",
+                "weibo.com\tFALSE\t/\tTRUE\t0\tWBPSESS\tabc==",
+            ]
+        )
+
+        cookies = WeiboExtractor._parse_cookie_header(raw)
+
+        self.assertEqual(cookies, {"SUB": "pc-sub", "WBPSESS": "abc=="})
+        self.assertTrue(all("\n" not in key + value for key, value in cookies.items()))
+
+    def test_parse_cookie_header_ignores_unsafe_multiline_parts(self):
+        raw = "Cookie: SUB=foo; SUBP=bar\nX-Other: no-cookie=value"
+
+        cookies = WeiboExtractor._parse_cookie_header(raw)
+
+        self.assertEqual(cookies, {"SUB": "foo", "SUBP": "bar"})
+
     def test_parse_visitor_jsonp_cookies(self):
         payload = (
             'window.visitor_gray_callback && visitor_gray_callback({"retcode":20000000,'

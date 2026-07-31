@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.8
+
+### 修复
+
+- 修复微博读取标准 `cookies.txt` 文件时，已解析的 Netscape Cookie 又被当作多行 `k=v;...` 文本重复解析，导致 HTTP Cookie header 非法的问题。
+
 ## v1.1.7
 
 ### 修复

@@ -426,10 +426,10 @@ class WeiboExtractor:
 
     @staticmethod
     def _parse_cookie_header(raw: str | None) -> dict[str, str]:
-        cookies: dict[str, str] = {}
         if not raw:
-            return cookies
+            return {}
 
+        netscape_cookies: dict[str, str] = {}
         for line in raw.splitlines():
             line = line.strip()
             if not line or "\t" not in line:
@@ -447,21 +447,37 @@ class WeiboExtractor:
                 continue
             key = parts[5].strip()
             value = parts[6].strip()
-            if key and value:
-                cookies[key] = value
+            if WeiboExtractor._is_safe_cookie_pair(key, value):
+                netscape_cookies[key] = value
 
-        for part in raw.split(";"):
-            part = part.strip()
-            if part.lower().startswith("cookie:"):
-                part = part.split(":", 1)[1].strip()
-            if "=" not in part:
+        if netscape_cookies:
+            return netscape_cookies
+
+        cookies: dict[str, str] = {}
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
                 continue
-            key, value = part.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            if key and value:
-                cookies[key] = value
+            if line.lower().startswith("cookie:"):
+                line = line.split(":", 1)[1].strip()
+            for part in line.split(";"):
+                part = part.strip()
+                if "=" not in part:
+                    continue
+                key, value = part.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if WeiboExtractor._is_safe_cookie_pair(key, value):
+                    cookies[key] = value
         return cookies
+
+    @staticmethod
+    def _is_safe_cookie_pair(key: str, value: str) -> bool:
+        if not key or not value:
+            return False
+        if any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in key):
+            return False
+        return not any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
 
     @staticmethod
     def _parse_set_cookie_headers(headers: httpx.Headers) -> dict[str, str]:
