@@ -109,7 +109,7 @@ ffmpeg -version
 | `weibo_settings.max_media` | 图文微博最多发送图片数 | 99 |
 | `weibo_settings.merge_send` | 视频微博使用合并转发 | ❌ 关闭 |
 | `weibo_settings.download_original` | 原图优先下载并自动回退 | ✅ 开启 |
-| `weibo_settings.cookies` | 微博 Cookie 文本 | 空 |
+| `weibo_settings.cookies` | 微博 Cookie 文本，留空时读取文件 | 空 |
 
 ### 小红书设置
 
@@ -217,18 +217,20 @@ data/plugin_data/astrbot_plugin_link_resolver/
 在 [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) 中点击 **Export**，或把 Cookie 内容手动保存到 AstrBot 数据目录下的对应文件。插件会自动创建目录。
 
 - B站：`data/plugin_data/astrbot_plugin_link_resolver/cookies/bili_cookies.txt`
+- 微博：`data/plugin_data/astrbot_plugin_link_resolver/cookies/weibo_cookies.txt`
 - 小红书：`data/plugin_data/astrbot_plugin_link_resolver/cookies/xhs_cookies.txt`
 - NGA：`data/plugin_data/astrbot_plugin_link_resolver/cookies/nga_cookies.txt`
 
 ### 微博 Cookie（可选）
 
-微博默认会先尝试生成访客 Cookie 解析公开微博；如果遇到受限内容、返回访客校验页面或成功率不稳定，可以在管理面板的 `weibo_settings.cookies` 粘贴浏览器 Cookie 字符串。
+微博默认会先尝试生成访客 Cookie 解析公开微博；如果遇到受限内容、返回访客校验页面或成功率不稳定，可以在管理面板的 `weibo_settings.cookies` 粘贴浏览器 Cookie，或把 Cookie 保存到 `cookies/weibo_cookies.txt`。
 
 建议至少包含 `SUB` 等微博登录态字段，格式示例：
 
 ```text
 SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 ```
+- `weibo_settings.cookies` 支持 `weibo.com` / `weibo.cn` 导出的 `cookies.txt` 内容，也兼容 `a=1; b=2` 形式的 Cookie 字符串。配置保存后会写入 `cookies/weibo_cookies.txt`；配置留空时会自动读取该文件。
 - 微博分享链路风控较重，公开微博也可能出现临时访客校验。
 
 ### 小红书 Cookie 与评论截图（可选）

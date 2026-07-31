@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from dataclasses import dataclass
 from html import unescape
@@ -238,6 +239,7 @@ class WeiboExtractor:
             raise WeiboRetryableError(f"生成微博访客 Cookie 网络异常: {exc}") from exc
 
         cookies = self._parse_set_cookie_headers(response.headers)
+        cookies.update(self._parse_visitor_jsonp_cookies(response.text))
         if not cookies.get("SUB"):
             raise WeiboAuthError("微博访客 Cookie 无效")
         return cookies
@@ -281,12 +283,22 @@ class WeiboExtractor:
 
         if not isinstance(data, dict):
             raise WeiboParseError("微博详情响应结构异常")
-        if data.get("ok") == 0:
+
+        ok = data.get("ok")
+        if ok == 0:
             raise WeiboParseError(data.get("msg") or "微博详情接口返回失败")
-        if not data.get("id") and not data.get("mblogid"):
+        if ok not in (None, 1, True):
+            message = str(data.get("msg") or data.get("message") or "")
+            login_url = str(data.get("url") or "")
+            if "login" in login_url.lower() or ok in (-100, "-100"):
+                raise WeiboAuthError(message or "微博要求登录或 Cookie 已失效")
+            raise WeiboParseError(message or f"微博详情接口返回失败: ok={ok}")
+
+        payload = self._extract_status_payload(data)
+        if not self._has_status_identity(payload):
             raise WeiboParseError("微博详情缺少关键字段")
-        await self._hydrate_long_texts(data, cookies)
-        return data
+        await self._hydrate_long_texts(payload, cookies)
+        return payload
 
     async def _fetch_long_text_json(
         self, weibo_id: str, cookies: dict[str, str]
@@ -417,7 +429,31 @@ class WeiboExtractor:
         cookies: dict[str, str] = {}
         if not raw:
             return cookies
+
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or "\t" not in line:
+                continue
+            if line.startswith("#") and not line.startswith("#HttpOnly_"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 7:
+                continue
+            domain = parts[0].strip().lower()
+            if domain.startswith("#httponly_"):
+                domain = domain.removeprefix("#httponly_")
+            domain = domain.lstrip(".")
+            if domain and not domain.endswith(("weibo.com", "weibo.cn")):
+                continue
+            key = parts[5].strip()
+            value = parts[6].strip()
+            if key and value:
+                cookies[key] = value
+
         for part in raw.split(";"):
+            part = part.strip()
+            if part.lower().startswith("cookie:"):
+                part = part.split(":", 1)[1].strip()
             if "=" not in part:
                 continue
             key, value = part.split("=", 1)
@@ -440,6 +476,47 @@ class WeiboExtractor:
             if key and value:
                 cookies[key] = value
         return cookies
+
+    @staticmethod
+    def _parse_visitor_jsonp_cookies(text: str | None) -> dict[str, str]:
+        if not text:
+            return {}
+
+        match = re.search(r"\((\{.*\})\)\s*;?\s*$", text.strip(), re.DOTALL)
+        if not match:
+            return {}
+
+        try:
+            payload = json.loads(match.group(1))
+        except (TypeError, ValueError):
+            return {}
+
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            return {}
+
+        cookies: dict[str, str] = {}
+        sub = data.get("sub")
+        subp = data.get("subp")
+        if isinstance(sub, str) and sub:
+            cookies["SUB"] = sub
+        if isinstance(subp, str) and subp:
+            cookies["SUBP"] = subp
+        return cookies
+
+    @staticmethod
+    def _extract_status_payload(data: dict[str, Any]) -> dict[str, Any]:
+        for key in ("data", "status", "mblog"):
+            value = data.get(key)
+            if isinstance(value, dict) and WeiboExtractor._has_status_identity(value):
+                return value
+        return data
+
+    @staticmethod
+    def _has_status_identity(status: dict[str, Any]) -> bool:
+        if not isinstance(status, dict):
+            return False
+        return any(status.get(key) for key in ("id", "idstr", "mblogid", "bid", "mid"))
 
     def _build_result(self, status: dict[str, Any], source_url: str) -> WeiboResult:
         display_status = status
@@ -476,7 +553,15 @@ class WeiboExtractor:
             video_url=video_url,
             cover_url=cover_url,
             source_url=source_url,
-            weibo_id=str(status.get("mblogid") or status.get("id") or "") or None,
+            weibo_id=str(
+                status.get("mblogid")
+                or status.get("bid")
+                or status.get("idstr")
+                or status.get("id")
+                or status.get("mid")
+                or ""
+            )
+            or None,
             created_at=(
                 status.get("created_at") or display_status.get("created_at") or None
             ),

@@ -48,6 +48,52 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cookies["SUB"], "foo")
         self.assertEqual(cookies["SUBP"], "bar")
 
+    def test_parse_netscape_cookies_txt_for_weibo_domains(self):
+        raw = "\n".join(
+            [
+                "# Netscape HTTP Cookie File",
+                ".weibo.com\tTRUE\t/\tTRUE\t0\tSUB\tweibo-sub",
+                "#HttpOnly_.weibo.cn\tTRUE\t/\tTRUE\t0\tSUBP\tweibo-subp",
+                ".example.com\tTRUE\t/\tTRUE\t0\tignored\tvalue",
+            ]
+        )
+
+        cookies = WeiboExtractor._parse_cookie_header(raw)
+
+        self.assertEqual(cookies, {"SUB": "weibo-sub", "SUBP": "weibo-subp"})
+
+    def test_parse_visitor_jsonp_cookies(self):
+        payload = (
+            'window.visitor_gray_callback && visitor_gray_callback({"retcode":20000000,'
+            '"msg":"succ","data":{"sub":"visitor-sub","subp":"visitor-subp"}});'
+        )
+
+        cookies = WeiboExtractor._parse_visitor_jsonp_cookies(payload)
+
+        self.assertEqual(cookies, {"SUB": "visitor-sub", "SUBP": "visitor-subp"})
+
+    def test_extract_status_payload_accepts_wrapped_data_and_idstr(self):
+        payload = {
+            "ok": 1,
+            "data": {
+                "idstr": "5326658044953378",
+                "bid": "PzAbCdEfG",
+                "text_raw": "包在 data 里的微博",
+                "pics": [
+                    {"large": {"url": "https://wx4.sinaimg.cn/large/pic1.jpg"}}
+                ],
+            },
+        }
+
+        status = WeiboExtractor._extract_status_payload(payload)
+        result = WeiboExtractor()._build_result(
+            status, "https://weibo.com/6894541817/5326658044953378"
+        )
+
+        self.assertEqual(status["text_raw"], "包在 data 里的微博")
+        self.assertEqual(result.weibo_id, "PzAbCdEfG")
+        self.assertEqual(result.image_urls, ["https://wx4.sinaimg.cn/large/pic1.jpg"])
+
     def test_build_result_prefers_long_text_and_original_image(self):
         extractor = WeiboExtractor(download_original=True)
         status = {

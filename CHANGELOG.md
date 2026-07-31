@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.7
+
+### 修复
+
+- 微博 Cookie 支持保存到并自动读取 `cookies/weibo_cookies.txt`，兼容 `cookies.txt` 与 `k=v;...` 两种格式。
+- 微博详情接口返回登录态失效、`data/status/mblog` 包裹结构或仅含 `idstr/bid/mid` 时，给出更准确的解析结果或错误提示。
+- NGA 主楼和热点回复会拆分为多张截图发送，降低单张截图过高或过大导致发送失败的概率。
+
 ## v1.1.6
 
 ### 优化

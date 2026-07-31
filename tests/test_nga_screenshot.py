@@ -35,12 +35,17 @@ sys.modules.setdefault("astrbot.api", api_module)
 sys.modules.setdefault("astrbot.api.event", event_module)
 sys.modules.setdefault("astrbot.api.message_components", components_module)
 
-from core.nga.screenshot import _fit_screenshot_limits
+from core.nga.screenshot import _fit_screenshot_limits, _sanitize_filename_part
 
 dataclasses.dataclass = _dataclass
 
 
 class NgaScreenshotLimitTests(unittest.TestCase):
+    def test_sanitize_filename_part_keeps_safe_ascii(self):
+        self.assertEqual(_sanitize_filename_part("NGA 主楼 / 热点回复"), "nga")
+        self.assertEqual(_sanitize_filename_part("hot-reply_01"), "hot-reply_01")
+        self.assertEqual(_sanitize_filename_part("   "), "section")
+
     def test_fit_screenshot_limits_caps_height(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "tall.png"

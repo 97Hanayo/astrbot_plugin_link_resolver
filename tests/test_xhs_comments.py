@@ -315,6 +315,118 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(plugin.xhs_cookies, "a1=v1; web_session=abc")
 
+    def test_refresh_config_writes_weibo_cookies_to_file(self):
+        plugin = LinkResolver.__new__(LinkResolver)
+        raw_cookies = "# Netscape HTTP Cookie File .weibo.com TRUE / TRUE 0 SUB v1"
+        plugin.config = {"weibo_settings": {"cookies": raw_cookies}}
+        plugin.font_auto_install_enabled = False
+        plugin.custom_primary_font_path = None
+        plugin.custom_emoji_font_path = None
+        plugin.weibo_extractor = type(
+            "WeiboExtractorStub",
+            (),
+            {
+                "set_cookie": lambda self, cookie: setattr(self, "cookie", cookie),
+                "has_user_cookie": lambda self: bool(getattr(self, "cookie", "")),
+            },
+        )()
+        plugin._get_config_value = LinkResolver._get_config_value.__get__(
+            plugin, LinkResolver
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cookies_file = Path(tmpdir) / "cookies" / "weibo_cookies.txt"
+            with (
+                patch.object(plugin, "_configure_managed_fonts", lambda: None),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.get_user_font_paths",
+                    return_value=ManagedFontPaths(primary=None, emoji=None),
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.get_managed_font_paths",
+                    return_value=ManagedFontPaths(primary=None, emoji=None),
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.find_default_font",
+                    return_value=None,
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.find_emoji_font",
+                    return_value=None,
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCardRenderer"
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCommentScreenshotter"
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.get_weibo_cookies_file",
+                    return_value=cookies_file,
+                ),
+            ):
+                LinkResolver._refresh_config(plugin)
+
+            self.assertTrue(cookies_file.exists())
+            self.assertIn("\n.weibo.com", cookies_file.read_text("utf-8"))
+            self.assertIn("\n.weibo.com", plugin.weibo_extractor.cookie)
+
+    def test_refresh_config_reads_weibo_cookies_from_file_when_config_empty(self):
+        plugin = LinkResolver.__new__(LinkResolver)
+        plugin.config = {}
+        plugin.font_auto_install_enabled = False
+        plugin.custom_primary_font_path = None
+        plugin.custom_emoji_font_path = None
+        plugin.weibo_extractor = type(
+            "WeiboExtractorStub",
+            (),
+            {
+                "set_cookie": lambda self, cookie: setattr(self, "cookie", cookie),
+                "has_user_cookie": lambda self: bool(getattr(self, "cookie", "")),
+            },
+        )()
+        plugin._get_config_value = LinkResolver._get_config_value.__get__(
+            plugin, LinkResolver
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cookies_file = Path(tmpdir) / "cookies" / "weibo_cookies.txt"
+            cookies_file.parent.mkdir(parents=True)
+            cookies_file.write_text("SUB=v1; SUBP=v2", encoding="utf-8")
+            with (
+                patch.object(plugin, "_configure_managed_fonts", lambda: None),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.get_user_font_paths",
+                    return_value=ManagedFontPaths(primary=None, emoji=None),
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.get_managed_font_paths",
+                    return_value=ManagedFontPaths(primary=None, emoji=None),
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.find_default_font",
+                    return_value=None,
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.find_emoji_font",
+                    return_value=None,
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCardRenderer"
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.XiaohongshuCommentScreenshotter"
+                ),
+                patch(
+                    "data.plugins.astrbot_plugin_link_resolver.main.get_weibo_cookies_file",
+                    return_value=cookies_file,
+                ),
+            ):
+                LinkResolver._refresh_config(plugin)
+
+        self.assertEqual(plugin.weibo_extractor.cookie, "SUB=v1; SUBP=v2")
+        self.assertTrue(plugin.weibo_cookie_enabled)
+
     async def test_capture_xhs_comment_screenshots_passes_comment_limit(self):
         screenshotter = SimpleNamespace(capture=AsyncMock(return_value=[]))
         plugin = SimpleNamespace(

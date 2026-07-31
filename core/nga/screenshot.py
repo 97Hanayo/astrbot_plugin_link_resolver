@@ -198,10 +198,8 @@ class NgaScreenshotter:
                         logger.warning("NGA screenshot skipped: capture root not found")
                         return NgaCaptureResult([], image_urls)
                     await self._wait_for_capture_images(page)
-                    path = output_dir / f"{request_id}_nga_main_hot.png"
-                    await target.screenshot(path=str(path), timeout=20000)
-                    path = await asyncio.to_thread(_fit_screenshot_limits, path)
-                    return NgaCaptureResult([path], image_urls)
+                    paths = await self._capture_sections(page, output_dir, request_id)
+                    return NgaCaptureResult(paths, image_urls)
                 finally:
                     await context.close()
             finally:
@@ -247,6 +245,29 @@ class NgaScreenshotter:
 
     async def _wait_for_capture_images(self, page) -> None:
         await self._wait_for_images(page, "#codex-nga-capture-root img")
+
+    async def _capture_sections(
+        self,
+        page,
+        output_dir: Path,
+        request_id: str,
+    ) -> list[Path]:
+        sections = page.locator("#codex-nga-capture-root .codex-nga-capture-section")
+        count = await sections.count()
+        if count <= 0:
+            sections = page.locator("#codex-nga-capture-root")
+            count = await sections.count()
+
+        paths: list[Path] = []
+        for index in range(count):
+            section = sections.nth(index)
+            suffix = await section.get_attribute("data-codex-nga-section")
+            suffix = _sanitize_filename_part(suffix or f"section_{index + 1:02d}")
+            path = output_dir / f"{request_id}_nga_{index + 1:02d}_{suffix}.png"
+            await section.screenshot(path=str(path), timeout=20000)
+            path = await asyncio.to_thread(_fit_screenshot_limits, path)
+            paths.append(path)
+        return paths
 
     async def _wait_for_images(self, page, selector: str) -> None:
         try:
@@ -440,9 +461,11 @@ class NgaScreenshotter:
                 'line-height:1.55'
               ].join(';');
 
-              const addClone = (el, label) => {
+              const addClone = (el, label, key) => {
                 if (!el) return;
                 const box = document.createElement('div');
+                box.className = 'codex-nga-capture-section';
+                box.setAttribute('data-codex-nga-section', key || label);
                 box.style.cssText = 'margin:0 0 12px 0;padding:10px;background:#fffaf0;border:1px solid #c8b88a;';
                 const title = document.createElement('div');
                 title.textContent = label;
@@ -456,13 +479,17 @@ class NgaScreenshotter:
                 root.appendChild(box);
               };
 
-              addClone(mainPost, 'NGA 主楼');
+              addClone(mainPost, 'NGA 主楼', 'main');
               hotNodes.slice(0, 2).forEach((node, index) => {
-                addClone(node, index === 0 ? '热点回复' : '热点回复补充');
+                addClone(
+                  node,
+                  index === 0 ? '热点回复' : '热点回复补充',
+                  index === 0 ? 'hot_reply_1' : 'hot_reply_2'
+                );
               });
 
               if (!root.children.length) {
-                addClone(document.body, 'NGA 页面');
+                addClone(document.body, 'NGA 页面', 'page');
               }
               document.body.innerHTML = '';
               document.body.style.cssText = 'margin:0;background:#f6f0df;';
@@ -555,6 +582,12 @@ def _remove_if_different(path: Path, keep_path: Path) -> None:
         path.unlink(missing_ok=True)
     except Exception as exc:
         logger.debug("NGA screenshot cleanup skipped for %s: %s", path, exc)
+
+
+def _sanitize_filename_part(value: str) -> str:
+    normalized = re.sub(r"[^0-9A-Za-z_-]+", "_", value.strip().lower())
+    normalized = normalized.strip("_")
+    return normalized[:40] or "section"
 
 
 __all__ = [

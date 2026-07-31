@@ -20,6 +20,7 @@ from .core.common import (
     SizeLimitExceeded,
     get_bili_cookies_file,
     get_nga_cookies_file,
+    get_weibo_cookies_file,
     get_xhs_cookies_file,
 )
 from .core.common.card_renderer import find_default_font, find_emoji_font
@@ -61,7 +62,7 @@ SUMMARY_MODE_CARD = "渲染卡片"
     "astrbot_plugin_link_resolver",
     "acacia",
     "解析 & 下载 Bilibili/抖音/小红书/微博/X/NGA",
-    "1.1.6",
+    "1.1.7",
 )
 class LinkResolverPlugin(
     BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, TwitterMixin, NgaMixin, Star
@@ -232,6 +233,31 @@ class LinkResolverPlugin(
         weibo_cookies_str = str(
             self._get_config_value("weibo_settings.cookies", "")
         ).strip()
+        weibo_cookies_file = get_weibo_cookies_file()
+        if weibo_cookies_str:
+            try:
+                weibo_cookies_file.parent.mkdir(parents=True, exist_ok=True)
+                if "\n" not in weibo_cookies_str and ".weibo.com" in weibo_cookies_str:
+                    weibo_cookies_str = re.sub(
+                        r"\s+(\.?(?:www\.|m\.)?weibo\.(?:com|cn)\s)",
+                        r"\n\1",
+                        weibo_cookies_str,
+                    )
+                    weibo_cookies_str = weibo_cookies_str.replace("# ", "\n# ").strip()
+                weibo_cookies_file.write_text(weibo_cookies_str, encoding="utf-8")
+                logger.info("🍪 微博 Cookie 已从配置写入文件")
+            except Exception as exc:
+                logger.warning("⚠️ 写入微博 Cookie 文件失败: %s", str(exc))
+        else:
+            try:
+                if weibo_cookies_file.exists():
+                    weibo_cookies_str = weibo_cookies_file.read_text(
+                        encoding="utf-8"
+                    ).strip()
+                    if weibo_cookies_str:
+                        logger.info("🍪 使用文件读取微博 Cookie: %s", weibo_cookies_file)
+            except Exception as exc:
+                logger.warning("⚠️ 读取微博 Cookie 文件失败: %s", str(exc))
         self.weibo_extractor.set_cookie(weibo_cookies_str)
         self.weibo_extractor.download_original = self.weibo_download_original
         self.weibo_cookie_enabled = self.weibo_extractor.has_user_cookie()
