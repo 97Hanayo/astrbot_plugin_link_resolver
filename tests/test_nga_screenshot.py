@@ -53,10 +53,22 @@ class NgaScreenshotLimitTests(unittest.TestCase):
 
             result = _fit_screenshot_limits(path)
 
-            self.assertEqual(result, path)
+            self.assertEqual(result.suffix, ".jpg")
+            self.assertFalse(path.exists())
             with Image.open(result) as image:
                 self.assertEqual(image.height, 10000)
                 self.assertLessEqual(image.width, 320)
+
+    def test_fit_screenshot_limits_compresses_small_png_too(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "small.png"
+            Image.new("RGB", (800, 800), (246, 240, 223)).save(path, format="PNG")
+
+            result = _fit_screenshot_limits(path)
+
+            self.assertEqual(result.suffix, ".jpg")
+            self.assertFalse(path.exists())
+            self.assertLessEqual(result.stat().st_size, 5 * 1024 * 1024)
 
     def test_fit_screenshot_limits_converts_oversized_png_under_five_mb(self):
         with tempfile.TemporaryDirectory() as tmpdir:

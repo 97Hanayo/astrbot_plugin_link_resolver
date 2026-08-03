@@ -12,6 +12,10 @@ from urllib.parse import urlparse
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from astrbot.api import logger
 
+from ..common.image_compression import (
+    DEFAULT_MAX_IMAGE_BYTES,
+    fit_image_file_limits,
+)
 from ..common.playwright_manager import (
     browser_channel_candidates,
     configure_playwright_browser_path,
@@ -34,6 +38,7 @@ _COMMENT_SELECTORS = (
 _MAX_SCROLL_ROUNDS_LIMITED = 28
 _MAX_SCROLL_ROUNDS_UNLIMITED = 80
 _MAX_COMPOSE_HEIGHT = 3600
+_MAX_COMMENT_SCREENSHOT_BYTES = DEFAULT_MAX_IMAGE_BYTES
 
 
 @dataclass(slots=True)
@@ -546,9 +551,14 @@ def _save_chunk(
         canvas.paste(image, ((width - image.width) // 2, y))
         y += image.height
     path = output_dir / f"{request_id}_comments_{suffix}_{page_index:02d}.png"
-    canvas.save(path, format="PNG")
+    canvas.save(path, format="PNG", optimize=True)
     canvas.close()
-    return path
+    return fit_image_file_limits(
+        path,
+        max_bytes=_MAX_COMMENT_SCREENSHOT_BYTES,
+        max_height=_MAX_COMPOSE_HEIGHT,
+        force_jpeg=True,
+    )
 
 
 def _load_font(font_path: Path | None, size: int) -> ImageFont.ImageFont:

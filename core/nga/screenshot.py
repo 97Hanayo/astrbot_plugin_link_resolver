@@ -8,8 +8,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-from PIL import Image
-
+from ..common.image_compression import (
+    DEFAULT_MAX_IMAGE_BYTES,
+    DEFAULT_MAX_IMAGE_HEIGHT,
+    fit_image_file_limits,
+)
 from ..common.playwright_manager import (
     browser_channel_candidates,
     configure_playwright_browser_path,
@@ -28,9 +31,8 @@ NGA_MESSAGE_PATTERN = (
 )
 
 _NGA_COOKIE_DOMAINS = ("nga.cn", "178.com", "ngabbs.com")
-_MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024
-_MAX_SCREENSHOT_HEIGHT = 10000
-_MIN_JPEG_QUALITY = 45
+_MAX_SCREENSHOT_BYTES = DEFAULT_MAX_IMAGE_BYTES
+_MAX_SCREENSHOT_HEIGHT = DEFAULT_MAX_IMAGE_HEIGHT
 
 
 @dataclass(slots=True)
@@ -513,75 +515,12 @@ def _fit_screenshot_limits(
     max_bytes: int = _MAX_SCREENSHOT_BYTES,
     max_height: int = _MAX_SCREENSHOT_HEIGHT,
 ) -> Path:
-    if max_bytes <= 0 and max_height <= 0:
-        return path
-    if not path.exists():
-        return path
-
-    with Image.open(path) as image:
-        normalized = image.convert("RGB")
-
-    try:
-        normalized = _resize_to_height(normalized, max_height)
-        if _save_png_if_small(normalized, path, max_bytes):
-            return path
-        return _save_jpeg_with_limits(normalized, path, max_bytes, max_height)
-    finally:
-        normalized.close()
-
-
-def _resize_to_height(image: Image.Image, max_height: int) -> Image.Image:
-    if max_height <= 0 or image.height <= max_height:
-        return image
-    width = max(1, round(image.width * max_height / image.height))
-    resized = image.resize((width, max_height), Image.Resampling.LANCZOS)
-    image.close()
-    return resized
-
-
-def _save_png_if_small(image: Image.Image, path: Path, max_bytes: int) -> bool:
-    image.save(path, format="PNG", optimize=True)
-    return max_bytes <= 0 or path.stat().st_size <= max_bytes
-
-
-def _save_jpeg_with_limits(
-    image: Image.Image,
-    png_path: Path,
-    max_bytes: int,
-    max_height: int,
-) -> Path:
-    jpg_path = png_path.with_suffix(".jpg")
-    working = image.copy()
-    try:
-        scale = 0.9
-        while True:
-            for quality in (88, 82, 76, 70, 64, 58, 52, _MIN_JPEG_QUALITY):
-                working.save(jpg_path, format="JPEG", quality=quality, optimize=True)
-                if max_bytes <= 0 or jpg_path.stat().st_size <= max_bytes:
-                    _remove_if_different(png_path, jpg_path)
-                    return jpg_path
-            if working.width <= 360 or working.height <= 360:
-                _remove_if_different(png_path, jpg_path)
-                return jpg_path
-            next_width = max(360, round(working.width * scale))
-            next_height = max(360, round(working.height * scale))
-            if max_height > 0:
-                next_height = min(next_height, max_height)
-            resized = working.resize((next_width, next_height), Image.Resampling.LANCZOS)
-            working.close()
-            working = resized
-            scale = 0.85
-    finally:
-        working.close()
-
-
-def _remove_if_different(path: Path, keep_path: Path) -> None:
-    if path == keep_path:
-        return
-    try:
-        path.unlink(missing_ok=True)
-    except Exception as exc:
-        logger.debug("NGA screenshot cleanup skipped for %s: %s", path, exc)
+    return fit_image_file_limits(
+        path,
+        max_bytes=max_bytes,
+        max_height=max_height,
+        force_jpeg=True,
+    )
 
 
 def _sanitize_filename_part(value: str) -> str:

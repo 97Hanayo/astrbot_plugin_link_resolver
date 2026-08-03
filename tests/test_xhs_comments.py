@@ -31,6 +31,7 @@ from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu.comments import 
     COMMENT_MODE_DRAW,
     COMMENT_MODE_WEB,
     _normalize_xhs_url,
+    _save_chunk,
     _trim_comment_fragment,
     parse_xhs_cookies,
 )
@@ -63,6 +64,48 @@ class TestXhsCommentCookies(unittest.TestCase):
         self.assertEqual(cookies[0]["expires"], 1893456000)
         self.assertTrue(cookies[0]["secure"])
         self.assertFalse(cookies[1]["secure"])
+
+
+class TestXhsCommentImageCompression(unittest.TestCase):
+    def test_save_chunk_compresses_small_png_too(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            image = PillowImage.new("RGB", (800, 800), (255, 255, 255))
+            try:
+                result = _save_chunk(
+                    [image],
+                    output_dir,
+                    "request1",
+                    "web",
+                    1,
+                )
+            finally:
+                image.close()
+
+            self.assertEqual(result.suffix, ".jpg")
+            self.assertFalse((output_dir / "request1_comments_web_01.png").exists())
+            self.assertLessEqual(result.stat().st_size, 5 * 1024 * 1024)
+
+    def test_save_chunk_compresses_oversized_png(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            image = PillowImage.effect_noise((1600, 3600), 100).convert("RGB")
+            try:
+                result = _save_chunk(
+                    [image],
+                    output_dir,
+                    "request1",
+                    "web",
+                    1,
+                )
+            finally:
+                image.close()
+
+            self.assertEqual(result.suffix, ".jpg")
+            self.assertFalse((output_dir / "request1_comments_web_01.png").exists())
+            self.assertLessEqual(result.stat().st_size, 5 * 1024 * 1024)
+            with PillowImage.open(result) as saved:
+                self.assertEqual(saved.height, 3600)
 
     def test_parse_cookie_header_uses_xhs_domain(self):
         cookies = parse_xhs_cookies("a1=v1; web_session=abc")
