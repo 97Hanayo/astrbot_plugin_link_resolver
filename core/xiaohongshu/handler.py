@@ -19,6 +19,7 @@ from ..common import (
     get_xhs_image_path,
     get_xhs_video_path,
 )
+from ..common.image_compression import fit_image_file_limits
 from . import (
     XHS_HEADERS,
     XiaohongshuParseError,
@@ -34,7 +35,39 @@ from .extractor import _XHS_DOWNLOAD_UA
 XHS_PARSE_TIMEOUT_SEC = 30.0
 XHS_PARSE_RETRY_BASE_DELAY_SEC = 1.0
 XHS_PARSE_RETRY_MAX_DELAY_SEC = 8.0
+XHS_ORIGINAL_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 # endregion
+
+
+def _compress_xhs_original_if_needed(path: Path) -> Path:
+    """Compress an oversized downloaded original image before sending it."""
+    try:
+        original_size = path.stat().st_size
+    except OSError:
+        return path
+
+    if original_size <= XHS_ORIGINAL_IMAGE_MAX_BYTES:
+        return path
+
+    try:
+        compressed_path = fit_image_file_limits(
+            path,
+            max_bytes=XHS_ORIGINAL_IMAGE_MAX_BYTES,
+            max_height=0,
+            force_jpeg=True,
+        )
+        compressed_size = compressed_path.stat().st_size
+    except Exception as exc:
+        logger.warning("⚠️ 小红书原图压缩失败，继续使用原文件: %s", str(exc))
+        return path
+
+    logger.info(
+        "🍠 小红书原图超过 10MB，已压缩: %.1fMB -> %.1fMB, 文件=%s",
+        original_size / 1024 / 1024,
+        compressed_size / 1024 / 1024,
+        compressed_path.name,
+    )
+    return compressed_path
 
 
 # region 小红书混入
@@ -269,6 +302,10 @@ class XiaohongshuMixin:
                                                 final_part.replace(final_output)
 
                                             await asyncio.to_thread(_move)
+                                            final_output = await asyncio.to_thread(
+                                                _compress_xhs_original_if_needed,
+                                                final_output,
+                                            )
 
                                             total_elapsed = (
                                                 time.perf_counter() - start_time

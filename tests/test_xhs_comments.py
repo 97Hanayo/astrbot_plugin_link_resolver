@@ -36,6 +36,7 @@ from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu.comments import 
     parse_xhs_cookies,
 )
 from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu.handler import (
+    _compress_xhs_original_if_needed,
     XiaohongshuMixin,
 )
 from data.plugins.astrbot_plugin_link_resolver.main import LinkResolver
@@ -64,6 +65,37 @@ class TestXhsCommentCookies(unittest.TestCase):
         self.assertEqual(cookies[0]["expires"], 1893456000)
         self.assertTrue(cookies[0]["secure"])
         self.assertFalse(cookies[1]["secure"])
+
+
+class TestXhsOriginalImageCompression(unittest.TestCase):
+    def test_small_original_image_keeps_original_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "original.jpg"
+            image = PillowImage.new("RGB", (800, 800), (255, 255, 255))
+            try:
+                image.save(path, format="JPEG")
+            finally:
+                image.close()
+
+            result = _compress_xhs_original_if_needed(path)
+
+            self.assertEqual(result, path)
+
+    def test_oversized_original_image_is_compressed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "original.png"
+            image = PillowImage.effect_noise((2000, 3200), 100).convert("RGB")
+            try:
+                image.save(path, format="PNG")
+            finally:
+                image.close()
+
+            self.assertGreater(path.stat().st_size, 10 * 1024 * 1024)
+            result = _compress_xhs_original_if_needed(path)
+
+            self.assertEqual(result.suffix, ".jpg")
+            self.assertLessEqual(result.stat().st_size, 10 * 1024 * 1024)
+            self.assertFalse(path.exists())
 
 
 class TestXhsCommentImageCompression(unittest.TestCase):

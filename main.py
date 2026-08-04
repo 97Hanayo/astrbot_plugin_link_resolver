@@ -62,7 +62,7 @@ SUMMARY_MODE_CARD = "渲染卡片"
     "astrbot_plugin_link_resolver",
     "acacia",
     "解析 & 下载 Bilibili/抖音/小红书/微博/X/NGA",
-    "1.1.9",
+    "1.1.10",
 )
 class LinkResolverPlugin(
     BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, TwitterMixin, NgaMixin, Star
