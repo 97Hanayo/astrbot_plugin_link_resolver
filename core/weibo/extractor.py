@@ -591,7 +591,33 @@ class WeiboExtractor:
             return True
         page_info = status.get("page_info") or {}
         media_info = page_info.get("media_info") or {}
-        return bool(page_info.get("type") == "video" or media_info)
+        if page_info.get("type") == "video" or media_info:
+            return True
+
+        for item in WeiboExtractor._iter_mix_media_items(status):
+            item_type = WeiboExtractor._mix_media_item_type(item)
+            data = item.get("data") or {}
+            if item_type in {"video", "pic", "image", "photo", "picture"}:
+                return True
+            if isinstance(data, dict) and (data.get("media_info") or data.get("pic_id")):
+                return True
+        return False
+
+    @staticmethod
+    def _iter_mix_media_items(status: dict[str, Any]) -> list[dict[str, Any]]:
+        mix_media_info = status.get("mix_media_info") if isinstance(status, dict) else None
+        items = mix_media_info.get("items") if isinstance(mix_media_info, dict) else None
+        if not isinstance(items, list):
+            return []
+        return [item for item in items if isinstance(item, dict)]
+
+    @staticmethod
+    def _mix_media_item_type(item: dict[str, Any]) -> str:
+        data = item.get("data")
+        item_type = item.get("type")
+        if not item_type and isinstance(data, dict):
+            item_type = data.get("type")
+        return str(item_type or "").strip().lower()
 
     def _extract_image_urls(self, status: dict[str, Any]) -> list[str]:
         pic_infos = status.get("pic_infos") or {}
@@ -610,6 +636,22 @@ class WeiboExtractor:
             if not isinstance(item, dict):
                 continue
             url = self._pick_image_url(item)
+            if url and url not in urls:
+                urls.append(url)
+
+        for item in self._iter_mix_media_items(status):
+            if self._mix_media_item_type(item) not in {
+                "pic",
+                "image",
+                "photo",
+                "picture",
+            }:
+                continue
+            data = item.get("data")
+            if not isinstance(data, dict):
+                continue
+            pic_info = data.get("pic_info") if isinstance(data.get("pic_info"), dict) else data
+            url = self._pick_image_url(pic_info)
             if url and url not in urls:
                 urls.append(url)
         return urls
@@ -660,57 +702,77 @@ class WeiboExtractor:
         return None
 
     def _extract_video(self, status: dict[str, Any]) -> tuple[str | None, str | None]:
+        payloads: list[tuple[dict[str, Any], dict[str, Any]]] = []
         page_info = status.get("page_info") or {}
-        media_info = page_info.get("media_info") or {}
-        playback_list = media_info.get("playback_list") or []
+        if isinstance(page_info, dict):
+            media_info = page_info.get("media_info") or {}
+            if isinstance(media_info, dict):
+                payloads.append((page_info, media_info))
+
+        for item in self._iter_mix_media_items(status):
+            if self._mix_media_item_type(item) != "video":
+                continue
+            data = item.get("data")
+            if not isinstance(data, dict):
+                continue
+            media_info = data.get("media_info") or {}
+            if isinstance(media_info, dict):
+                payloads.append((data, media_info))
 
         best_url = None
         best_bitrate = -1
-        for item in playback_list:
-            play_info = item.get("play_info") if isinstance(item, dict) else None
-            if not isinstance(play_info, dict):
-                continue
-            url = play_info.get("url")
-            bitrate = self._coerce_int(play_info.get("bitrate"))
-            if url and bitrate >= best_bitrate:
-                best_url = url
-                best_bitrate = bitrate
+        for page_info, media_info in payloads:
+            for item in media_info.get("playback_list") or []:
+                play_info = item.get("play_info") if isinstance(item, dict) else None
+                if not isinstance(play_info, dict):
+                    continue
+                url = play_info.get("url")
+                bitrate = self._coerce_int(play_info.get("bitrate"))
+                if url and bitrate >= best_bitrate:
+                    best_url = url
+                    best_bitrate = bitrate
 
         if not best_url:
-            for key in (
-                "stream_url_hd",
-                "stream_url",
-                "url",
-                "mp4_720p_mp4",
-                "mp4_hd_url",
-                "mp4_sd_url",
-            ):
-                value = media_info.get(key) or page_info.get(key)
-                if isinstance(value, str) and value.startswith(("http://", "https://")):
-                    best_url = value
-                    break
-                if isinstance(value, dict):
-                    url = value.get("url")
-                    if isinstance(url, str) and url.startswith(("http://", "https://")):
-                        best_url = url
+            for page_info, media_info in payloads:
+                for key in (
+                    "stream_url_hd",
+                    "stream_url",
+                    "url",
+                    "mp4_720p_mp4",
+                    "mp4_hd_url",
+                    "mp4_sd_url",
+                ):
+                    value = media_info.get(key) or page_info.get(key)
+                    if isinstance(value, str) and value.startswith(("http://", "https://")):
+                        best_url = value
                         break
+                    if isinstance(value, dict):
+                        url = value.get("url")
+                        if isinstance(url, str) and url.startswith(("http://", "https://")):
+                            best_url = url
+                            break
+                if best_url:
+                    break
 
         cover_url = None
-        for candidate in (
-            page_info.get("page_pic"),
-            media_info.get("poster"),
-            media_info.get("pic_info"),
-            media_info.get("cover_img"),
-        ):
-            if isinstance(candidate, dict):
-                url = candidate.get("url") or candidate.get("pic_url")
-                if url:
-                    cover_url = url
-                    break
-            elif isinstance(candidate, str) and candidate.startswith(
-                ("http://", "https://")
+        for page_info, media_info in payloads:
+            for candidate in (
+                page_info.get("page_pic"),
+                media_info.get("poster"),
+                media_info.get("pic_info"),
+                media_info.get("cover_img"),
             ):
-                cover_url = candidate
+                if isinstance(candidate, dict):
+                    url = candidate.get("url") or candidate.get("pic_url")
+                    if url:
+                        cover_url = url
+                        break
+                elif isinstance(candidate, str) and candidate.startswith(
+                    ("http://", "https://")
+                ):
+                    cover_url = candidate
+                    break
+            if cover_url:
                 break
 
         return best_url, cover_url

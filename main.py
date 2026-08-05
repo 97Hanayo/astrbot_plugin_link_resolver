@@ -54,6 +54,13 @@ from .core.xiaohongshu.handler import XiaohongshuMixin
 TASK_NAME_PREFIX = "link-resolver-parse"
 SUMMARY_MODE_TEXT = "文字摘要"
 SUMMARY_MODE_CARD = "渲染卡片"
+# Xiaoheihe share cards include API, image, and app-icon URLs that are not content links.
+IGNORED_CARD_LINK_DOMAINS = (
+    "xiaoheihe.cn",
+    "xiaoheihe.com",
+    "ugcimg.cn",
+    "gtimg.cn",
+)
 # endregion
 
 
@@ -62,7 +69,7 @@ SUMMARY_MODE_CARD = "渲染卡片"
     "astrbot_plugin_link_resolver",
     "acacia",
     "解析 & 下载 Bilibili/抖音/小红书/微博/X/NGA",
-    "1.1.10",
+    "1.1.11",
 )
 class LinkResolverPlugin(
     BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, TwitterMixin, NgaMixin, Star
@@ -753,6 +760,17 @@ class LinkResolverPlugin(
             logger.warning("⚠️ 解析 JSON 消息组件失败: %s", str(exc))
         return links
 
+    @staticmethod
+    def _is_ignored_card_link(url: str) -> bool:
+        try:
+            hostname = (urlparse(url).hostname or "").lower().rstrip(".")
+        except ValueError:
+            return False
+        return any(
+            hostname == domain or hostname.endswith(f".{domain}")
+            for domain in IGNORED_CARD_LINK_DOMAINS
+        )
+
     # endregion
 
     # region 消息基础判断
@@ -1203,23 +1221,26 @@ class LinkResolverPlugin(
         if not links:
             return
         unique_links = list(dict.fromkeys(links))
+        candidate_links = [
+            link for link in unique_links if not self._is_ignored_card_link(link)
+        ]
         bili_links = [
-            link for link in unique_links if re.search(BILI_MESSAGE_PATTERN, link)
+            link for link in candidate_links if re.search(BILI_MESSAGE_PATTERN, link)
         ]
         douyin_links = [
-            link for link in unique_links if re.search(DOUYIN_MESSAGE_PATTERN, link)
+            link for link in candidate_links if re.search(DOUYIN_MESSAGE_PATTERN, link)
         ]
         xhs_links = [
-            link for link in unique_links if re.search(XHS_MESSAGE_PATTERN, link)
+            link for link in candidate_links if re.search(XHS_MESSAGE_PATTERN, link)
         ]
         weibo_links = [
-            link for link in unique_links if re.search(WEIBO_MESSAGE_PATTERN, link)
+            link for link in candidate_links if re.search(WEIBO_MESSAGE_PATTERN, link)
         ]
         twitter_links = [
-            link for link in unique_links if re.search(TWITTER_MESSAGE_PATTERN, link)
+            link for link in candidate_links if re.search(TWITTER_MESSAGE_PATTERN, link)
         ]
         nga_links = [
-            link for link in unique_links if re.search(NGA_MESSAGE_PATTERN, link)
+            link for link in candidate_links if re.search(NGA_MESSAGE_PATTERN, link)
         ]
 
         if bili_links and self.bili_enabled:
@@ -1288,7 +1309,8 @@ class LinkResolverPlugin(
                 logger.info("♻️ JSON卡片解析任务已中断")
                 return
 
-        logger.warning("⚠️ 从卡片中找到链接但无法解析: %s", unique_links)
+        if candidate_links:
+            logger.warning("⚠️ 从卡片中找到链接但无法解析: %s", candidate_links)
 
     # endregion
 

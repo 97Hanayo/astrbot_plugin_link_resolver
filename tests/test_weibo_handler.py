@@ -14,7 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 for candidate in Path(__file__).resolve().parents:
     if (candidate / "data" / "plugins").exists():
@@ -118,6 +118,46 @@ class TestWeiboHandler(unittest.IsolatedAsyncioTestCase):
             event, "https://weibo.com/1234567890/AbCdEfGhI", is_from_card=True
         )
         self.assertTrue(event._llm)
+
+    async def test_handle_json_card_ignores_xiaoheihe_asset_links(self):
+        event = DummyEvent(
+            components=[
+                {
+                    "type": "json",
+                    "data": {
+                        "meta": {
+                            "detail_1": {
+                                "url": "https://api.xiaoheihe.cn/v3/bbs/app/api/web/share?h_camp=link"
+                            }
+                        },
+                        "image": "https://qq.ugcimg.cn/v1/example.jpg",
+                        "icon": "https://open.gtimg.cn/open/app_icon/example.png",
+                    },
+                }
+            ]
+        )
+        plugin = LinkResolver.__new__(LinkResolver)
+        plugin.bili_enabled = False
+        plugin.douyin_enabled = False
+        plugin.xhs_enabled = False
+        plugin.weibo_enabled = False
+        plugin.twitter_enabled = False
+        plugin.nga_enabled = False
+        plugin.group_filter_mode = "黑名单"
+        plugin.group_filter_list = []
+        plugin._is_bot_muted = AsyncMock(return_value=False)
+        plugin.extract_links_from_json = LinkResolver.extract_links_from_json.__get__(
+            plugin, LinkResolver
+        )
+        plugin._coerce_json_payload = LinkResolver._coerce_json_payload.__get__(
+            plugin, LinkResolver
+        )
+
+        with patch("data.plugins.astrbot_plugin_link_resolver.main.logger.warning") as warning:
+            async for _ in LinkResolver.handle_json_card(plugin, event):
+                pass
+
+        warning.assert_not_called()
 
     async def test_process_weibo_merged_video_uses_callback_preparation(self):
         event = DummyEvent()

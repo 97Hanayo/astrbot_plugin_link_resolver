@@ -210,6 +210,64 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.cover_url, "https://wx4.sinaimg.cn/large/cover.jpg")
         self.assertEqual(result.image_urls, [])
 
+    def test_build_result_supports_mix_media_info(self):
+        extractor = WeiboExtractor()
+        status = {
+            "id": "5327398318903668",
+            "mblogid": "RbuKPBmfy",
+            "text_raw": "新版混合媒体微博",
+            "mix_media_info": {
+                "items": [
+                    {
+                        "type": "video",
+                        "data": {
+                            "page_pic": {
+                                "url": "https://wx3.sinaimg.cn/orj480/cover.jpg"
+                            },
+                            "media_info": {
+                                "playback_list": [
+                                    {
+                                        "play_info": {
+                                            "bitrate": 1200,
+                                            "url": "https://media.example.com/low.mp4",
+                                        }
+                                    },
+                                    {
+                                        "play_info": {
+                                            "bitrate": 4800,
+                                            "url": "https://media.example.com/high.mp4",
+                                        }
+                                    },
+                                ]
+                            },
+                        },
+                    },
+                    {
+                        "type": "pic",
+                        "data": {
+                            "original": {
+                                "url": "https://wx2.sinaimg.cn/orj1080/pic.jpg"
+                            },
+                            "largest": {
+                                "url": "https://wx2.sinaimg.cn/large/pic.jpg"
+                            },
+                        },
+                    },
+                ]
+            },
+        }
+
+        self.assertTrue(WeiboExtractor._status_has_media(status))
+        result = extractor._build_result(
+            status, "https://weibo.com/6036567968/5327398318903668"
+        )
+
+        self.assertEqual(result.video_url, "https://media.example.com/high.mp4")
+        self.assertEqual(result.cover_url, "https://wx3.sinaimg.cn/orj480/cover.jpg")
+        self.assertEqual(
+            result.image_urls, ["https://wx2.sinaimg.cn/large/pic.jpg"]
+        )
+
     def test_build_result_falls_back_to_retweeted_status_media(self):
         extractor = WeiboExtractor()
         status = {
