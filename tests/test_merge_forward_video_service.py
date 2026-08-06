@@ -1,4 +1,4 @@
-"""Verify merged-forward videos use callback URLs when available.
+"""Verify merged-forward media uses callback URLs when available.
 
 Run inside AstrBot container:
     cd /AstrBot
@@ -44,12 +44,41 @@ class TestMergeForwardVideoService(unittest.IsolatedAsyncioTestCase):
         )
         register_mock.assert_awaited_once()
 
-    async def test_non_video_component_is_left_unchanged(self):
+    async def test_local_image_is_converted_to_callback_url(self):
         component = Image.fromFileSystem("/tmp/demo.jpg")
 
-        converted = await LinkResolver._prepare_component_for_merge_send(None, component)
+        with patch.object(
+            Image,
+            "register_to_file_service",
+            new=AsyncMock(return_value="http://astrbot:6185/api/file/image123"),
+        ) as register_mock:
+            converted = await LinkResolver._prepare_component_for_merge_send(
+                None, component
+            )
+
+        self.assertIsInstance(converted, Image)
+        self.assertEqual(converted.file, "http://astrbot:6185/api/file/image123")
+        self.assertEqual(
+            converted.toDict()["data"]["file"],
+            "http://astrbot:6185/api/file/image123",
+        )
+        register_mock.assert_awaited_once()
+
+    async def test_failed_image_registration_keeps_original_component(self):
+        component = Image.fromFileSystem("/tmp/demo.jpg")
+
+        with patch.object(
+            Image,
+            "register_to_file_service",
+            new=AsyncMock(side_effect=RuntimeError("callback disabled")),
+        ) as register_mock:
+            converted = await LinkResolver._prepare_component_for_merge_send(
+                None, component
+            )
 
         self.assertIs(converted, component)
+        self.assertTrue(converted.file.startswith("file:///"))
+        register_mock.assert_awaited_once()
 
     async def test_failed_registration_keeps_original_component(self):
         component = Video.fromFileSystem("/tmp/demo.mp4")

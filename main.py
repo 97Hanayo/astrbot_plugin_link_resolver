@@ -69,7 +69,7 @@ IGNORED_CARD_LINK_DOMAINS = (
     "astrbot_plugin_link_resolver",
     "acacia",
     "解析 & 下载 Bilibili/抖音/小红书/微博/X/NGA",
-    "1.1.11",
+    "1.1.12",
 )
 class LinkResolverPlugin(
     BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, TwitterMixin, NgaMixin, Star
@@ -1097,9 +1097,14 @@ class LinkResolverPlugin(
     async def _prepare_component_for_merge_send(
         self, component: Comp.BaseMessageComponent
     ) -> Comp.BaseMessageComponent:
-        """规避 AstrBot 合并转发视频节点未走异步 to_dict 的兼容问题。"""
+        """将合并转发中的本地媒体转换为文件服务地址。
 
-        if not isinstance(component, Comp.Video):
+        合并转发节点可能只调用同步的 ``toDict``，异机适配器无法读取
+        ``file:///`` 本地路径。图片和视频都需要在发送前注册到 AstrBot
+        文件服务；注册失败时保留原组件，兼容同机直读本地文件的适配器。
+        """
+
+        if not isinstance(component, (Comp.Image, Comp.Video)):
             return component
 
         file_ref = str(getattr(component, "file", "") or "").strip()
@@ -1109,10 +1114,19 @@ class LinkResolverPlugin(
         try:
             callback_url = await component.register_to_file_service()
         except Exception as exc:
-            logger.debug("⏭️ 合并转发视频保留本地路径: %s", str(exc))
+            media_label = "图片" if isinstance(component, Comp.Image) else "视频"
+            logger.debug(
+                "⏭️ 合并转发%s保留本地路径: %s", media_label, str(exc)
+            )
             return component
 
-        logger.debug("🔗 合并转发视频改用回调地址: %s", callback_url)
+        logger.debug(
+            "🔗 合并转发%s改用回调地址: %s",
+            "图片" if isinstance(component, Comp.Image) else "视频",
+            callback_url,
+        )
+        if isinstance(component, Comp.Image):
+            return Comp.Image.fromURL(callback_url)
         return Comp.Video.fromURL(
             callback_url,
             cover=getattr(component, "cover", ""),
