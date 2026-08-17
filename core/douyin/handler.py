@@ -35,10 +35,13 @@ class DouyinMixin:
         return base_dir / f"{self._hash_url(url)}_{request_id}{suffix}"
 
     async def _download_douyin_video(self, url: str, request_id: str) -> Path:
+        cookies = getattr(self, "douyin_cookies", None)
         max_bytes = (
             self.max_video_size_mb * 1024 * 1024 if self.max_video_size_mb > 0 else None
         )
-        size_mb = await self._estimate_total_size_mb(url, None, headers=IOS_HEADERS)
+        size_mb = await self._estimate_total_size_mb(
+            url, None, cookies=cookies, headers=IOS_HEADERS
+        )
         logger.debug(
             "🎵 估算抖音视频大小: %s MB",
             f"{size_mb:.2f}" if size_mb is not None else "未知",
@@ -47,16 +50,25 @@ class DouyinMixin:
             raise SizeLimitExceeded("超过大小限制")
         output_path = self._build_douyin_path(url, is_video=True, request_id=request_id)
         await self._download_stream(
-            url, output_path, cookies=None, max_bytes=max_bytes, headers=IOS_HEADERS
+            url,
+            output_path,
+            cookies=cookies,
+            max_bytes=max_bytes,
+            headers=IOS_HEADERS,
         )
         return output_path
 
     async def _download_douyin_image(self, url: str, request_id: str) -> Path:
+        cookies = getattr(self, "douyin_cookies", None)
         output_path = self._build_douyin_path(
             url, is_video=False, request_id=request_id
         )
         await self._download_stream(
-            url, output_path, cookies=None, max_bytes=None, headers=ANDROID_HEADERS
+            url,
+            output_path,
+            cookies=cookies,
+            max_bytes=None,
+            headers=ANDROID_HEADERS,
         )
         return output_path
 
@@ -66,13 +78,14 @@ class DouyinMixin:
         if not cover_url:
             return None
         try:
+            cookies = getattr(self, "douyin_cookies", None)
             # 使用哈希生成文件名
             name = self._hash_url(cover_url)
             cover_path = get_douyin_card_path() / f"{name}_{request_id}_cover.jpg"
             await self._download_stream(
                 cover_url,
                 cover_path,
-                cookies=None,
+                cookies=cookies,
                 max_bytes=None,
                 headers=ANDROID_HEADERS,
             )

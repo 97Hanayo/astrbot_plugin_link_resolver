@@ -118,6 +118,12 @@
                     "文字摘要",
                     "渲染卡片"
                 ]
+            },
+            "cookies": {
+                "description": "抖音Cookies",
+                "type": "string",
+                "hint": "可选。支持 Get cookies.txt LOCALLY 的 cookies.txt 内容或 k=v;... Cookie 字符串；填写后会自动保存到 cookies/douyin_cookies.txt，也可手动导出到该路径。留空时读取该文件。",
+                "default": ""
             }
         }
     },

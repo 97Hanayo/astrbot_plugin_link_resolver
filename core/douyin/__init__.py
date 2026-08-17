@@ -28,6 +28,16 @@ ANDROID_HEADERS = {
         "Edg/132.0.0.0"
     )
 }
+
+DOUYIN_COOKIE_DOMAINS = (
+    "douyin.com",
+    "iesdouyin.com",
+    "douyinpic.com",
+    "douyinvod.com",
+    "pstatp.com",
+    "byteimg.com",
+    "amemv.com",
+)
 # endregion
 
 # region 链接正则
@@ -101,11 +111,28 @@ def _normalize_url(url: str) -> str:
 class DouyinExtractor:
     def __init__(self, timeout: float = 15.0):
         self.timeout = timeout
+        self.cookie = ""
+        self._cookies: dict[str, str] = {}
+
+    def set_cookie(self, cookie: str | None) -> None:
+        """设置 Cookie 文本，支持 Cookie header 和 Netscape cookies.txt。"""
+        self.cookie = (cookie or "").strip()
+        self._cookies = self._parse_cookie_header(self.cookie)
+
+    def get_cookies(self) -> dict[str, str]:
+        """返回供 httpx 使用的 Cookie 字典。"""
+        return dict(self._cookies)
+
+    def has_cookie(self) -> bool:
+        return bool(self._cookies)
 
     async def resolve_short_url(self, url: str) -> str:
         url = _normalize_url(url)
         async with httpx.AsyncClient(
-            follow_redirects=True, timeout=self.timeout, headers=IOS_HEADERS
+            follow_redirects=True,
+            timeout=self.timeout,
+            headers=IOS_HEADERS,
+            cookies=self._cookies or None,
         ) as client:
             try:
                 response = await client.head(url)
@@ -247,7 +274,11 @@ class DouyinExtractor:
         url = "https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/"
         params = {"item_ids": video_id}
         headers = {**ANDROID_HEADERS, "Referer": "https://www.douyin.com/"}
-        async with httpx.AsyncClient(timeout=self.timeout, headers=headers) as client:
+        async with httpx.AsyncClient(
+            timeout=self.timeout,
+            headers=headers,
+            cookies=self._cookies or None,
+        ) as client:
             response = await client.get(url, params=params)
         if response.status_code != 200:
             raise DouyinParseError(f"iteminfo status: {response.status_code}")
@@ -331,7 +362,11 @@ class DouyinExtractor:
             "request_source": "200",
         }
         headers = {**ANDROID_HEADERS, "Referer": "https://www.douyin.com/"}
-        async with httpx.AsyncClient(timeout=self.timeout, headers=headers) as client:
+        async with httpx.AsyncClient(
+            timeout=self.timeout,
+            headers=headers,
+            cookies=self._cookies or None,
+        ) as client:
             response = await client.get(url, params=params)
         response.raise_for_status()
 
@@ -361,9 +396,75 @@ class DouyinExtractor:
                 return url
         return None
 
+    @staticmethod
+    def _parse_cookie_header(raw: str | None) -> dict[str, str]:
+        """解析浏览器导出的 cookies.txt 或普通 Cookie header。"""
+        raw = (raw or "").strip()
+        if not raw:
+            return {}
+
+        netscape_cookies: dict[str, str] = {}
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or "\t" not in line:
+                continue
+            if line.startswith("#") and not line.lower().startswith("#httponly_"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 7:
+                continue
+            domain = parts[0].strip().lower()
+            if domain.startswith("#httponly_"):
+                domain = domain.removeprefix("#httponly_")
+            domain = domain.lstrip(".")
+            if not domain or not any(
+                domain == suffix or domain.endswith(f".{suffix}")
+                for suffix in DOUYIN_COOKIE_DOMAINS
+            ):
+                continue
+            key = parts[5].strip()
+            value = parts[6].strip()
+            if DouyinExtractor._is_safe_cookie_pair(key, value):
+                netscape_cookies[key] = value
+
+        # 标准 Netscape 文件一旦解析出有效记录，就不要再把整段文件
+        # 当作一行 Cookie header 解析，否则换行/制表符会产生非法 header。
+        if netscape_cookies:
+            return netscape_cookies
+
+        cookies: dict[str, str] = {}
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.lower().startswith("cookie:"):
+                line = line.split(":", 1)[1].strip()
+            for part in line.split(";"):
+                part = part.strip()
+                if "=" not in part:
+                    continue
+                key, value = part.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if DouyinExtractor._is_safe_cookie_pair(key, value):
+                    cookies[key] = value
+        return cookies
+
+    @staticmethod
+    def _is_safe_cookie_pair(key: str, value: str) -> bool:
+        if not key or not value:
+            return False
+        if any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in key):
+            return False
+        return not any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+
     async def _fetch_html(self, url: str, follow_redirects: bool) -> httpx.Response:
         headers = {**IOS_HEADERS, "Referer": "https://www.douyin.com/"}
-        async with httpx.AsyncClient(timeout=self.timeout, headers=headers) as client:
+        async with httpx.AsyncClient(
+            timeout=self.timeout,
+            headers=headers,
+            cookies=self._cookies or None,
+        ) as client:
             response = await client.get(url, follow_redirects=follow_redirects)
         if response.status_code != 200:
             raise DouyinParseError(f"status: {response.status_code}")

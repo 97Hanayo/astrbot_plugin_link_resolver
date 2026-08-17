@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.13
+
+### 新增
+
+- 抖音支持配置或读取 `cookies/douyin_cookies.txt` 中的登录 Cookie，并用于链接解析、媒体下载和封面下载。
+
 ## v1.1.12
 
 ### 修复

@@ -19,6 +19,7 @@ from .core.bilibili import BILI_MESSAGE_PATTERN, BilibiliMixin
 from .core.common import (
     SizeLimitExceeded,
     get_bili_cookies_file,
+    get_douyin_cookies_file,
     get_nga_cookies_file,
     get_weibo_cookies_file,
     get_xhs_cookies_file,
@@ -69,7 +70,7 @@ IGNORED_CARD_LINK_DOMAINS = (
     "astrbot_plugin_link_resolver",
     "acacia",
     "解析 & 下载 Bilibili/抖音/小红书/微博/X/NGA",
-    "1.1.12",
+    "1.1.13",
 )
 class LinkResolverPlugin(
     BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, TwitterMixin, NgaMixin, Star
@@ -226,6 +227,44 @@ class LinkResolverPlugin(
             "douyin_settings.summary_mode"
         )
         self.douyin_render_card = self.douyin_summary_mode == SUMMARY_MODE_CARD
+        douyin_cookies_str = str(
+            self._get_config_value("douyin_settings.cookies", "")
+        ).strip()
+        douyin_cookies_file = get_douyin_cookies_file()
+        if douyin_cookies_str:
+            try:
+                douyin_cookies_file.parent.mkdir(parents=True, exist_ok=True)
+                # 管理面板可能把 cookies.txt 的换行折叠为空格，恢复抖音域名行。
+                if "\n" not in douyin_cookies_str and "douyin.com" in douyin_cookies_str:
+                    douyin_cookies_str = re.sub(
+                        r"\s+((?:#HttpOnly_)?\.?(?:(?:www\.)?douyin\.com|(?:www\.)?iesdouyin\.com)\s)",
+                        r"\n\1",
+                        douyin_cookies_str,
+                    )
+                    douyin_cookies_str = douyin_cookies_str.replace("# ", "\n# ").strip()
+                douyin_cookies_file.write_text(douyin_cookies_str, encoding="utf-8")
+                logger.info("🍪 抖音 Cookie 已从配置写入文件")
+            except Exception as exc:
+                logger.warning("⚠️ 写入抖音 Cookie 文件失败: %s", str(exc))
+        else:
+            try:
+                if douyin_cookies_file.exists():
+                    douyin_cookies_str = douyin_cookies_file.read_text(
+                        encoding="utf-8"
+                    ).strip()
+                    if douyin_cookies_str:
+                        logger.info("🍪 使用文件读取抖音 Cookie: %s", douyin_cookies_file)
+            except Exception as exc:
+                logger.warning("⚠️ 读取抖音 Cookie 文件失败: %s", str(exc))
+        douyin_extractor = getattr(self, "douyin_extractor", None)
+        if douyin_extractor is not None:
+            douyin_extractor.set_cookie(douyin_cookies_str)
+            self.douyin_cookies = douyin_extractor.get_cookies()
+            self.douyin_cookie_enabled = douyin_extractor.has_cookie()
+        else:
+            # 允许仅测试/重载部分配置的轻量实例不创建完整解析器。
+            self.douyin_cookies = {}
+            self.douyin_cookie_enabled = False
 
         # 微博配置
         self.weibo_max_media = max(
@@ -454,7 +493,7 @@ class LinkResolverPlugin(
             else "关闭"
         )
         logger.info(
-            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,摘要=%s,时长<=%s), 抖音(合并=%s,摘要=%s), 小红书(原图=%s,摘要=%s,大图转文件=%s,评论截图=%s/%s/%d条,Cookie=%s), 微博(原图=%s,合并=%s,Cookie=%s), X(合并=%s,最多=%d), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
+            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,摘要=%s,时长<=%s), 抖音(合并=%s,摘要=%s,Cookie=%s), 小红书(原图=%s,摘要=%s,大图转文件=%s,评论截图=%s/%s/%d条,Cookie=%s), 微博(原图=%s,合并=%s,Cookie=%s), X(合并=%s,最多=%d), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
             "/".join(enabled_list) if enabled_list else "无",
             self.video_quality.name,
             "开" if self.bili_merge_send else "关",
@@ -462,6 +501,7 @@ class LinkResolverPlugin(
             duration_label,
             "开" if self.douyin_merge_send else "关",
             "卡片" if self.douyin_render_card else "文字",
+            "开" if self.douyin_cookie_enabled else "关",
             "开" if self.xhs_download_original else "关",
             "卡片" if self.xhs_render_card else "文字",
             xhs_image_limit_label,

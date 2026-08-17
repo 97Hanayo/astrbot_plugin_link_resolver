@@ -101,6 +101,7 @@ ffmpeg -version
 | `douyin_settings.max_media` | 图集最多发送媒体数 | 99 |
 | `douyin_settings.merge_send` | 视频使用合并转发 | ❌ 关闭 |
 | `douyin_settings.summary_mode` | 合并发送时使用 `文字摘要` 或 `渲染卡片` | `文字摘要` |
+| `douyin_settings.cookies` | 抖音 Cookies 文本，留空时读取文件 | 空 |
 
 ### 微博设置
 
@@ -219,6 +220,7 @@ data/plugin_data/astrbot_plugin_link_resolver/
 - B站：`data/plugin_data/astrbot_plugin_link_resolver/cookies/bili_cookies.txt`
 - 微博：`data/plugin_data/astrbot_plugin_link_resolver/cookies/weibo_cookies.txt`
 - 小红书：`data/plugin_data/astrbot_plugin_link_resolver/cookies/xhs_cookies.txt`
+- 抖音：`data/plugin_data/astrbot_plugin_link_resolver/cookies/douyin_cookies.txt`
 - NGA：`data/plugin_data/astrbot_plugin_link_resolver/cookies/nga_cookies.txt`
 
 ### 微博 Cookie（可选）
@@ -232,6 +234,10 @@ SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 ```
 - `weibo_settings.cookies` 支持 `weibo.com` / `weibo.cn` 导出的 `cookies.txt` 内容，也兼容 `a=1; b=2` 形式的 Cookie 字符串。配置保存后会写入 `cookies/weibo_cookies.txt`；配置留空时会自动读取该文件。
 - 微博分享链路风控较重，公开微博也可能出现临时访客校验。
+
+### 抖音 Cookie（可选）
+
+抖音解析遇到登录态、风控或接口返回为空时，可以在管理面板的 `douyin_settings.cookies` 粘贴浏览器 Cookie，或把导出的 `cookies.txt` 保存到 `cookies/douyin_cookies.txt`。支持 Netscape `cookies.txt` 和 `a=1; b=2` 形式；配置留空时自动读取该文件。
 
 ### 小红书 Cookie 与评论截图（可选）
 
