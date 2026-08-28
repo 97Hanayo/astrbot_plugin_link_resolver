@@ -39,6 +39,7 @@ _MAX_SCROLL_ROUNDS_LIMITED = 28
 _MAX_SCROLL_ROUNDS_UNLIMITED = 80
 _MAX_COMPOSE_HEIGHT = 3600
 _MAX_COMMENT_SCREENSHOT_BYTES = DEFAULT_MAX_IMAGE_BYTES
+_COMMENT_TOP_SAFE_AREA_HEIGHT = 160
 
 
 @dataclass(slots=True)
@@ -459,7 +460,7 @@ def _compose_images(
 ) -> list[Path]:
     paths: list[Path] = []
     chunk: list[Image.Image] = []
-    chunk_height = 0
+    chunk_height = _COMMENT_TOP_SAFE_AREA_HEIGHT
     page_index = 1
     for image in images:
         normalized = ImageOps.expand(image, border=(0, 0, 0, 12), fill=(255, 255, 255))
@@ -467,7 +468,7 @@ def _compose_images(
             paths.append(_save_chunk(chunk, output_dir, request_id, suffix, page_index))
             page_index += 1
             chunk = []
-            chunk_height = 0
+            chunk_height = _COMMENT_TOP_SAFE_AREA_HEIGHT
         chunk.append(normalized)
         chunk_height += normalized.height
     if chunk:
@@ -544,9 +545,9 @@ def _save_chunk(
     page_index: int,
 ) -> Path:
     width = max(image.width for image in chunk)
-    height = sum(image.height for image in chunk)
+    height = _COMMENT_TOP_SAFE_AREA_HEIGHT + sum(image.height for image in chunk)
     canvas = Image.new("RGB", (width, height), (255, 255, 255))
-    y = 0
+    y = _COMMENT_TOP_SAFE_AREA_HEIGHT
     for image in chunk:
         canvas.paste(image, ((width - image.width) // 2, y))
         y += image.height

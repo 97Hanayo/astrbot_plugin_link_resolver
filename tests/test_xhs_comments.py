@@ -30,6 +30,7 @@ from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu import (
 from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu.comments import (
     COMMENT_MODE_DRAW,
     COMMENT_MODE_WEB,
+    _COMMENT_TOP_SAFE_AREA_HEIGHT,
     _normalize_xhs_url,
     _save_chunk,
     _trim_comment_fragment,
@@ -99,6 +100,27 @@ class TestXhsOriginalImageCompression(unittest.TestCase):
 
 
 class TestXhsCommentImageCompression(unittest.TestCase):
+    def test_save_chunk_adds_white_safe_area_above_comments(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            image = PillowImage.new("RGB", (430, 300), (40, 80, 120))
+            try:
+                result = _save_chunk([image], output_dir, "request1", "web", 1)
+            finally:
+                image.close()
+
+            with PillowImage.open(result) as saved:
+                self.assertEqual(
+                    saved.height,
+                    300 + _COMMENT_TOP_SAFE_AREA_HEIGHT,
+                )
+                top_pixel = saved.getpixel((saved.width // 2, 20))
+                content_pixel = saved.getpixel(
+                    (saved.width // 2, _COMMENT_TOP_SAFE_AREA_HEIGHT + 20)
+                )
+                self.assertTrue(all(channel >= 245 for channel in top_pixel))
+                self.assertLess(content_pixel[0], 80)
+
     def test_save_chunk_compresses_small_png_too(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir)
