@@ -151,10 +151,24 @@
                 "hint": "开启后优先下载微博原图/大图；关闭则优先下载普通大图，但仍会自动回退到可用图片。",
                 "default": true
             },
+            "auto_refresh_cookies": {
+                "description": "自动续期微博Cookies",
+                "type": "bool",
+                "hint": "开启后定期请求微博首页，并保存微博服务端真实下发的 Set-Cookie；不会伪造或延长 Cookie 有效期。",
+                "default": true
+            },
+            "cookie_refresh_interval_hours": {
+                "description": "Cookie续期间隔(小时)",
+                "type": "int",
+                "hint": "登录 Cookie 保活请求的最短间隔，建议 6~24 小时。",
+                "default": 12,
+                "min": 1,
+                "max": 168
+            },
             "cookies": {
                 "description": "微博Cookies",
                 "type": "string",
-                "hint": "可选。支持 Get cookies.txt LOCALLY 的 cookies.txt 内容或 k=v;... Cookie 字符串；填写后会自动保存到 cookies/weibo_cookies.txt，也可手动导出到该路径。留空时优先读取文件，否则尝试访客 Cookie。",
+                "hint": "可选。支持 Get cookies.txt LOCALLY 的 cookies.txt 内容或 k=v;... Cookie 字符串；填写后会保存到 cookies/weibo_cookies.txt。运行中微博服务端更新的 Cookie 也会写回该文件；留空则读取文件，否则尝试访客 Cookie。",
                 "default": ""
             }
         }

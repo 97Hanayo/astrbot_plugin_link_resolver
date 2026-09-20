@@ -1,5 +1,12 @@
 # Changelog
 
+## 未发布
+
+### 新增
+
+- 微博登录 Cookie 支持定期请求微博首页保活，并捕获微博接口真实返回的 `Set-Cookie` 更新。
+- 服务端更新后的微博 Cookie 会原子写回 `cookies/weibo_cookies.txt`，插件重载时优先使用该持久化值。
+
 ## v1.1.13
 
 ### 新增

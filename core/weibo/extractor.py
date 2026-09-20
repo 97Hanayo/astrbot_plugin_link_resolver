@@ -12,10 +12,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import tempfile
+import time
 from dataclasses import dataclass
 from html import unescape
-from typing import Any
+from http.cookies import SimpleCookie
+from pathlib import Path
+from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -29,6 +34,8 @@ WEIBO_VISITOR_FORM = {
     "tid": "",
     "from": "weibo",
 }
+WEIBO_COOKIE_REFRESH_URL = "https://weibo.com/"
+WEIBO_COOKIE_REFRESH_INTERVAL_SEC = 12 * 60 * 60
 WEIBO_BASE_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -127,14 +134,44 @@ class WeiboExtractor:
         self.timeout = timeout
         self.download_original = download_original
         self.cookie = ""
+        self._user_cookies: dict[str, str] = {}
         self._visitor_cookies: dict[str, str] | None = None
+        self._cookie_storage_path: Path | None = None
+        self._cookie_update_callback: Callable[[str], None] | None = None
+        self._auto_refresh_cookies = True
+        self._cookie_refresh_interval_sec = WEIBO_COOKIE_REFRESH_INTERVAL_SEC
+        self._last_cookie_refresh_at = 0.0
 
     def set_cookie(self, cookie: str | None) -> None:
         self.cookie = (cookie or "").strip()
+        self._user_cookies = self._parse_cookie_header(self.cookie)
         self._visitor_cookies = None
+        self._last_cookie_refresh_at = 0.0
+
+    def set_cookie_storage(
+        self,
+        path: str | Path | None,
+        on_update: Callable[[str], None] | None = None,
+    ) -> None:
+        """Configure the local file used for refreshed user cookies."""
+        self._cookie_storage_path = Path(path) if path else None
+        self._cookie_update_callback = on_update
+
+    def configure_cookie_refresh(
+        self,
+        enabled: bool = True,
+        interval_hours: int | float = 12,
+    ) -> None:
+        self._auto_refresh_cookies = bool(enabled)
+        try:
+            interval_hours = float(interval_hours)
+        except (TypeError, ValueError):
+            interval_hours = 12
+        self._cookie_refresh_interval_sec = max(1.0, interval_hours * 3600)
+        self._last_cookie_refresh_at = 0.0
 
     def has_user_cookie(self) -> bool:
-        return bool(self._parse_cookie_header(self.cookie))
+        return bool(self._user_cookies)
 
     async def resolve_short_url(self, url: str) -> str:
         url = _normalize_url(url)
@@ -192,6 +229,9 @@ class WeiboExtractor:
         for attempt in range(retry_attempts):
             try:
                 cookies = await self._get_request_cookies(refresh_visitor=attempt > 0)
+                await self._refresh_user_cookies(cookies)
+                if self._user_cookies:
+                    cookies = dict(self._user_cookies)
                 return await self._fetch_status_json(weibo_id, cookies)
             except WeiboAuthError as exc:
                 errors.append(str(exc))
@@ -210,9 +250,8 @@ class WeiboExtractor:
     async def _get_request_cookies(
         self, *, refresh_visitor: bool = False
     ) -> dict[str, str]:
-        user_cookies = self._parse_cookie_header(self.cookie)
-        if user_cookies:
-            return user_cookies
+        if self._user_cookies:
+            return dict(self._user_cookies)
 
         if self._visitor_cookies is None or refresh_visitor:
             self._visitor_cookies = await self._generate_visitor_cookies()
@@ -244,6 +283,34 @@ class WeiboExtractor:
             raise WeiboAuthError("微博访客 Cookie 无效")
         return cookies
 
+    async def _refresh_user_cookies(self, cookies: dict[str, str]) -> None:
+        """Best-effort session warm-up; only server-issued cookies are saved."""
+        if not self._auto_refresh_cookies or not self._user_cookies:
+            return
+
+        now = time.monotonic()
+        if now - self._last_cookie_refresh_at < self._cookie_refresh_interval_sec:
+            return
+        self._last_cookie_refresh_at = now
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                headers=WEIBO_API_HEADERS,
+                cookies=cookies,
+                follow_redirects=True,
+            ) as client:
+                response = await client.get(WEIBO_COOKIE_REFRESH_URL)
+            self._capture_cookie_updates(response)
+            logger.debug(
+                "🐦 微博登录 Cookie 保活请求完成: status=%s",
+                response.status_code,
+            )
+        except asyncio.CancelledError:
+            raise
+        except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+            logger.debug("微博登录 Cookie 保活请求失败（不影响当前解析）: %s", exc)
+
     async def _fetch_status_json(
         self, weibo_id: str, cookies: dict[str, str]
     ) -> dict[str, Any]:
@@ -262,6 +329,8 @@ class WeiboExtractor:
             raise WeiboRetryableError("微博详情请求超时") from exc
         except httpx.HTTPError as exc:
             raise WeiboRetryableError(f"微博详情网络异常: {exc}") from exc
+
+        self._capture_cookie_updates(response)
 
         text = response.text or ""
         content_type = response.headers.get("Content-Type", "")
@@ -318,6 +387,8 @@ class WeiboExtractor:
             raise WeiboRetryableError("微博长文请求超时") from exc
         except httpx.HTTPError as exc:
             raise WeiboRetryableError(f"微博长文网络异常: {exc}") from exc
+
+        self._capture_cookie_updates(response)
 
         text = response.text or ""
         content_type = response.headers.get("Content-Type", "")
@@ -443,7 +514,7 @@ class WeiboExtractor:
             if domain.startswith("#httponly_"):
                 domain = domain.removeprefix("#httponly_")
             domain = domain.lstrip(".")
-            if domain and not domain.endswith(("weibo.com", "weibo.cn")):
+            if domain and not WeiboExtractor._is_weibo_host(domain):
                 continue
             key = parts[5].strip()
             value = parts[6].strip()
@@ -481,17 +552,114 @@ class WeiboExtractor:
 
     @staticmethod
     def _parse_set_cookie_headers(headers: httpx.Headers) -> dict[str, str]:
-        cookies: dict[str, str] = {}
+        return {
+            key: value
+            for key, value in WeiboExtractor._parse_set_cookie_updates(headers).items()
+            if value is not None
+        }
+
+    @staticmethod
+    def _parse_set_cookie_updates(
+        headers: httpx.Headers,
+        response_host: str | None = None,
+    ) -> dict[str, str | None]:
+        updates: dict[str, str | None] = {}
         for item in headers.get_list("set-cookie"):
-            segment = item.split(";", 1)[0].strip()
-            if "=" not in segment:
+            parsed = SimpleCookie()
+            try:
+                parsed.load(item)
+            except Exception:
                 continue
-            key, value = segment.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            if key and value:
-                cookies[key] = value
-        return cookies
+            for key, morsel in parsed.items():
+                cookie_domain = (morsel["domain"] or "").strip().lower().lstrip(".")
+                if cookie_domain and not WeiboExtractor._is_weibo_host(cookie_domain):
+                    continue
+                if response_host and not WeiboExtractor._is_weibo_host(response_host):
+                    continue
+                value = morsel.value.strip()
+                max_age = (morsel["max-age"] or "").strip().lower()
+                if not WeiboExtractor._is_safe_cookie_pair(key, value):
+                    if value == "" and not any(
+                        ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in key
+                    ):
+                        updates[key] = None
+                    continue
+                updates[key] = None if max_age in {"0", "-1"} else value
+        return updates
+
+    def _capture_cookie_updates(self, response: httpx.Response) -> None:
+        if not self._user_cookies:
+            return
+        host = (response.url.host or "").lower().rstrip(".")
+        if not self._is_weibo_host(host):
+            return
+
+        updates = self._parse_set_cookie_updates(
+            response.headers,
+            response_host=host,
+        )
+        if not updates:
+            return
+        changed = False
+        for key, value in updates.items():
+            if value is None:
+                changed = self._user_cookies.pop(key, None) is not None or changed
+            elif self._user_cookies.get(key) != value:
+                self._user_cookies[key] = value
+                changed = True
+        if not changed:
+            return
+
+        self.cookie = self._serialize_cookie_header(self._user_cookies)
+        self._persist_user_cookies()
+
+    def _persist_user_cookies(self) -> None:
+        if self._cookie_storage_path is not None:
+            path = self._cookie_storage_path
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=path.parent,
+                    prefix=f".{path.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as temporary:
+                    temporary.write(self.cookie)
+                    temporary.write("\n")
+                    temporary_path = Path(temporary.name)
+                try:
+                    os.chmod(temporary_path, 0o600)
+                except OSError:
+                    pass
+                os.replace(temporary_path, path)
+                logger.info("🍪 微博服务端更新的 Cookie 已持久化: %s", path)
+            except Exception as exc:
+                logger.warning("⚠️ 持久化微博更新 Cookie 失败: %s", exc)
+                try:
+                    temporary_path.unlink(missing_ok=True)
+                except (NameError, OSError):
+                    pass
+
+        if self._cookie_update_callback is not None:
+            try:
+                self._cookie_update_callback(self.cookie)
+            except Exception as exc:
+                logger.debug("同步微博 Cookie 配置失败（不影响文件持久化）: %s", exc)
+
+    @staticmethod
+    def _serialize_cookie_header(cookies: dict[str, str]) -> str:
+        return "; ".join(f"{key}={value}" for key, value in cookies.items())
+
+    @staticmethod
+    def _is_weibo_host(host: str) -> bool:
+        return (
+            host == "weibo.com"
+            or host.endswith(".weibo.com")
+            or host == "weibo.cn"
+            or host.endswith(".weibo.cn")
+        )
 
     @staticmethod
     def _parse_visitor_jsonp_cookies(text: str | None) -> dict[str, str]:

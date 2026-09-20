@@ -9,9 +9,12 @@ Run inside AstrBot container:
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock
+
+import httpx
 
 for candidate in Path(__file__).resolve().parents:
     if (candidate / "data" / "plugins").exists():
@@ -95,6 +98,59 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
         cookies = WeiboExtractor._parse_visitor_jsonp_cookies(payload)
 
         self.assertEqual(cookies, {"SUB": "visitor-sub", "SUBP": "visitor-subp"})
+
+    def test_server_cookie_updates_are_persisted_without_exposing_values(self):
+        extractor = WeiboExtractor()
+        extractor.set_cookie("SUB=old-sub; SUBP=old-subp")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cookie_path = Path(tmpdir) / "cookies" / "weibo_cookies.txt"
+            updates: list[str] = []
+            extractor.set_cookie_storage(cookie_path, updates.append)
+            response = httpx.Response(
+                200,
+                headers=[
+                    ("Set-Cookie", "SUB=new-sub; Domain=.weibo.com; Path=/; HttpOnly"),
+                    ("Set-Cookie", "WBPSESS=session-1; Domain=.weibo.com; Path=/"),
+                ],
+                request=httpx.Request("GET", "https://weibo.com/"),
+            )
+
+            extractor._capture_cookie_updates(response)
+
+            self.assertEqual(
+                extractor._user_cookies,
+                {"SUB": "new-sub", "SUBP": "old-subp", "WBPSESS": "session-1"},
+            )
+            self.assertEqual(
+                cookie_path.read_text("utf-8"),
+                "SUB=new-sub; SUBP=old-subp; WBPSESS=session-1\n",
+            )
+            self.assertEqual(updates, [extractor.cookie])
+
+    def test_server_cookie_updates_ignore_non_weibo_responses_and_deletions(self):
+        extractor = WeiboExtractor()
+        extractor.set_cookie("SUB=old-sub; SUBP=old-subp")
+        response = httpx.Response(
+            200,
+            headers=[
+                ("Set-Cookie", "SUB=; Max-Age=0; Domain=.weibo.com; Path=/"),
+                ("Set-Cookie", "evil=changed; Domain=example.com; Path=/"),
+            ],
+            request=httpx.Request("GET", "https://example.com/"),
+        )
+
+        extractor._capture_cookie_updates(response)
+
+        self.assertEqual(extractor._user_cookies, {"SUB": "old-sub", "SUBP": "old-subp"})
+
+        response = httpx.Response(
+            200,
+            headers={"Set-Cookie": "SUB=; Max-Age=0; Domain=.weibo.com; Path=/"},
+            request=httpx.Request("GET", "https://weibo.com/"),
+        )
+        extractor._capture_cookie_updates(response)
+        self.assertEqual(extractor._user_cookies, {"SUBP": "old-subp"})
 
     def test_extract_status_payload_accepts_wrapped_data_and_idstr(self):
         payload = {

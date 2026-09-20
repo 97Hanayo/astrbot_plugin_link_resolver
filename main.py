@@ -276,11 +276,42 @@ class LinkResolverPlugin(
         self.weibo_download_original = bool(
             self._get_config_value("weibo_settings.download_original", True)
         )
+        self.weibo_auto_refresh_cookies = bool(
+            self._get_config_value("weibo_settings.auto_refresh_cookies", True)
+        )
+        self.weibo_cookie_refresh_interval_hours = max(
+            1,
+            min(
+                168,
+                int(
+                    self._get_config_value(
+                        "weibo_settings.cookie_refresh_interval_hours", 12
+                    )
+                ),
+            ),
+        )
         weibo_cookies_str = str(
             self._get_config_value("weibo_settings.cookies", "")
         ).strip()
         weibo_cookies_file = get_weibo_cookies_file()
-        if weibo_cookies_str:
+        persisted_weibo_cookies = ""
+        if weibo_cookies_file.exists():
+            try:
+                persisted_weibo_cookies = weibo_cookies_file.read_text(
+                    encoding="utf-8"
+                ).strip()
+            except Exception as exc:
+                logger.warning("⚠️ 读取微博 Cookie 文件失败: %s", str(exc))
+
+        # 服务端续期后的 Cookie 以文件为准，避免插件重载时被管理面板中的旧值覆盖。
+        if (
+            weibo_cookies_str
+            and persisted_weibo_cookies
+            and WeiboExtractor._parse_cookie_header(persisted_weibo_cookies)
+        ):
+            weibo_cookies_str = persisted_weibo_cookies
+            logger.info("🍪 使用已持久化的微博 Cookie: %s", weibo_cookies_file)
+        elif weibo_cookies_str:
             try:
                 weibo_cookies_file.parent.mkdir(parents=True, exist_ok=True)
                 if "\n" not in weibo_cookies_str and ".weibo.com" in weibo_cookies_str:
@@ -295,15 +326,19 @@ class LinkResolverPlugin(
             except Exception as exc:
                 logger.warning("⚠️ 写入微博 Cookie 文件失败: %s", str(exc))
         else:
-            try:
-                if weibo_cookies_file.exists():
-                    weibo_cookies_str = weibo_cookies_file.read_text(
-                        encoding="utf-8"
-                    ).strip()
-                    if weibo_cookies_str:
-                        logger.info("🍪 使用文件读取微博 Cookie: %s", weibo_cookies_file)
-            except Exception as exc:
-                logger.warning("⚠️ 读取微博 Cookie 文件失败: %s", str(exc))
+            weibo_cookies_str = persisted_weibo_cookies
+            if weibo_cookies_str:
+                logger.info("🍪 使用文件读取微博 Cookie: %s", weibo_cookies_file)
+        if hasattr(self.weibo_extractor, "set_cookie_storage"):
+            self.weibo_extractor.set_cookie_storage(
+                weibo_cookies_file,
+                self._on_weibo_cookie_updated,
+            )
+        if hasattr(self.weibo_extractor, "configure_cookie_refresh"):
+            self.weibo_extractor.configure_cookie_refresh(
+                self.weibo_auto_refresh_cookies,
+                self.weibo_cookie_refresh_interval_hours,
+            )
         self.weibo_extractor.set_cookie(weibo_cookies_str)
         self.weibo_extractor.download_original = self.weibo_download_original
         self.weibo_cookie_enabled = self.weibo_extractor.has_user_cookie()
@@ -493,7 +528,7 @@ class LinkResolverPlugin(
             else "关闭"
         )
         logger.info(
-            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,摘要=%s,时长<=%s), 抖音(合并=%s,摘要=%s,Cookie=%s), 小红书(原图=%s,摘要=%s,大图转文件=%s,评论截图=%s/%s/%d条,Cookie=%s), 微博(原图=%s,合并=%s,Cookie=%s), X(合并=%s,最多=%d), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
+            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,摘要=%s,时长<=%s), 抖音(合并=%s,摘要=%s,Cookie=%s), 小红书(原图=%s,摘要=%s,大图转文件=%s,评论截图=%s/%s/%d条,Cookie=%s), 微博(原图=%s,合并=%s,Cookie=%s,续期=%s/%dh), X(合并=%s,最多=%d), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
             "/".join(enabled_list) if enabled_list else "无",
             self.video_quality.name,
             "开" if self.bili_merge_send else "关",
@@ -512,6 +547,8 @@ class LinkResolverPlugin(
             "开" if self.weibo_download_original else "关",
             "开" if self.weibo_merge_send else "关",
             "开" if self.weibo_cookie_enabled else "关",
+            "开" if self.weibo_auto_refresh_cookies else "关",
+            self.weibo_cookie_refresh_interval_hours,
             "开" if self.twitter_merge_send else "关",
             self.twitter_max_media,
             "开" if self.font_auto_install_enabled else "关",
@@ -541,6 +578,16 @@ class LinkResolverPlugin(
             self.default_primary_font
         )
         self.nga_screenshotter = NgaScreenshotter()
+
+    def _on_weibo_cookie_updated(self, cookie: str) -> None:
+        """同步服务端续期后的 Cookie 到当前可变配置对象。"""
+        settings = (
+            self.config.get("weibo_settings")
+            if isinstance(self.config, dict)
+            else None
+        )
+        if isinstance(settings, dict):
+            settings["cookies"] = cookie
 
     # endregion
 

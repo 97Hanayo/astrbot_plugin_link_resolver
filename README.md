@@ -110,6 +110,8 @@ ffmpeg -version
 | `weibo_settings.max_media` | 图文微博最多发送图片数 | 99 |
 | `weibo_settings.merge_send` | 视频微博使用合并转发 | ❌ 关闭 |
 | `weibo_settings.download_original` | 原图优先下载并自动回退 | ✅ 开启 |
+| `weibo_settings.auto_refresh_cookies` | 定期请求微博并保存服务端真实续期 Cookie | ✅ 开启 |
+| `weibo_settings.cookie_refresh_interval_hours` | Cookie 保活请求最短间隔（小时） | 12 |
 | `weibo_settings.cookies` | 微博 Cookie 文本，留空时读取文件 | 空 |
 
 ### 小红书设置
@@ -233,6 +235,7 @@ data/plugin_data/astrbot_plugin_link_resolver/
 SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 ```
 - `weibo_settings.cookies` 支持 `weibo.com` / `weibo.cn` 导出的 `cookies.txt` 内容，也兼容 `a=1; b=2` 形式的 Cookie 字符串。配置保存后会写入 `cookies/weibo_cookies.txt`；配置留空时会自动读取该文件。
+- 开启 `weibo_settings.auto_refresh_cookies` 后，插件会定期请求微博首页，并捕获微博接口真实返回的 `Set-Cookie` 更新，原子写回 `cookies/weibo_cookies.txt`；不会伪造 Cookie 有效期。若微博已经注销或不再下发续期 Cookie，仍需要重新导出登录 Cookie。
 - 微博分享链路风控较重，公开微博也可能出现临时访客校验。
 
 ### 抖音 Cookie（可选）
