@@ -250,6 +250,14 @@ class BilibiliMixin:
             return None
         return candidate if re.fullmatch(r"BV[0-9A-Za-z]{10}", candidate) else None
 
+    @staticmethod
+    def _build_bili_video_url(bvid: str | None) -> str | None:
+        """Build the canonical Bilibili video URL without query parameters."""
+        normalized_bvid = BilibiliMixin._normalize_bvid(str(bvid or ""))
+        if not normalized_bvid:
+            return None
+        return f"https://www.bilibili.com/video/{normalized_bvid}"
+
     # endregion
 
     # region 链接与解析
@@ -1104,6 +1112,10 @@ class BilibiliMixin:
             if not bvid:
                 logger.warning("⚠️ 无法获取 bvid%s", source_tag)
                 return
+            video_link = self._build_bili_video_url(str(bvid))
+            if not video_link:
+                logger.warning("⚠️ bvid 格式无效%s: %s", source_tag, bvid)
+                return
 
             title = info.get("title", "未知标题")
             description = str(info.get("desc") or "").strip()
@@ -1169,11 +1181,6 @@ class BilibiliMixin:
                         max_duration_seconds,
                         title[:30],
                     )
-                    video_link = ref.source_url
-                    if not video_link:
-                        video_id = ref.bvid or (f"av{ref.avid}" if ref.avid else None)
-                        if video_id:
-                            video_link = f"https://www.bilibili.com/video/{video_id}"
                     message = "视频太长了你自己看去"
                     if video_link:
                         message += f"\n链接：{video_link}"
@@ -1182,11 +1189,6 @@ class BilibiliMixin:
 
             video_paths: list[Path] = []
             thumbnail_paths: list[Path] = []
-            video_link = ref.source_url
-            if not video_link:
-                video_id = ref.bvid or (f"av{ref.avid}" if ref.avid else None)
-                if video_id:
-                    video_link = f"https://www.bilibili.com/video/{video_id}"
             intro_text = BilibiliMixin._build_bili_video_intro_text(
                 title, description, video_link
             )
@@ -1380,7 +1382,7 @@ class BilibiliMixin:
                     comments=comments,
                     duration_seconds=duration_seconds,
                     quality=actual_quality,
-                    source_url=ref.source_url,
+                    source_url=video_link,
                 )
             timing["render"] = time.perf_counter() - render_start
             # endregion

@@ -332,7 +332,7 @@ class TestSummaryModeHandlers(unittest.IsolatedAsyncioTestCase):
                         bvid="BV1xx411c7mD",
                         avid=None,
                         page_index=0,
-                        source_url="https://www.bilibili.com/video/BV1xx411c7mD",
+                        source_url="https://b23.tv/abc123?from=share",
                     ),
                 )
 
@@ -430,7 +430,7 @@ class TestSummaryModeHandlers(unittest.IsolatedAsyncioTestCase):
                         bvid="BV1xx411c7mD",
                         avid=None,
                         page_index=0,
-                        source_url="https://www.bilibili.com/video/BV1xx411c7mD",
+                        source_url="https://b23.tv/abc123?from=share",
                     ),
                 )
 
@@ -494,7 +494,7 @@ class TestSummaryModeHandlers(unittest.IsolatedAsyncioTestCase):
                     bvid="BV1xx411c7mD",
                     avid=None,
                     page_index=0,
-                    source_url="https://www.bilibili.com/video/BV1xx411c7mD",
+                    source_url="https://b23.tv/abc123?from=share",
                 ),
             )
 
