@@ -3,16 +3,25 @@
 import asyncio
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import aiohttp
 from astrbot.api import logger
 
+from ..common import (
+    atomic_write_cookie_text,
+    merge_cookie_updates,
+    parse_set_cookie_updates,
+    serialize_cookie_header,
+)
+
 
 # region 常量
 XHS_REQUEST_TIMEOUT_SEC = 30.0
+XHS_COOKIE_DOMAINS = ("xiaohongshu.com",)
 XHS_SHORT_LINK_PATTERN = r"(?:https?://)?(?:www\.)?xhslink\.(?:com|cn)/[A-Za-z0-9._?%&+=/#@-]+"
 XHS_MESSAGE_PATTERN = (
     r"(?s).*(?:"
@@ -122,9 +131,115 @@ class XiaohongshuExtractor:
         timeout: float = XHS_REQUEST_TIMEOUT_SEC,
     ):
         self.timeout = aiohttp.ClientTimeout(total=timeout)
+        self.cookie = ""
+        self._cookies: dict[str, str] = {}
+        self._cookie_storage_path: Path | None = None
+        self._cookie_update_callback: Callable[[str], None] | None = None
+        self._auto_refresh_cookies = True
+        self._cookie_refresh_interval_sec = 12 * 60 * 60
+        self._last_cookie_refresh_at = 0.0
+
+    def set_cookie(self, cookie: str | None) -> None:
+        self.cookie = (cookie or "").strip()
+        self._cookies = self._parse_cookie_header(self.cookie)
+        self._last_cookie_refresh_at = 0.0
+
+    def get_cookies(self) -> dict[str, str]:
+        return dict(self._cookies)
+
+    def has_cookie(self) -> bool:
+        return bool(self._cookies)
+
+    def set_cookie_storage(
+        self,
+        path: str | Path | None,
+        on_update: Callable[[str], None] | None = None,
+    ) -> None:
+        self._cookie_storage_path = Path(path) if path else None
+        self._cookie_update_callback = on_update
+
+    def configure_cookie_refresh(
+        self, enabled: bool = True, interval_hours: int | float = 12
+    ) -> None:
+        self._auto_refresh_cookies = bool(enabled)
+        try:
+            interval_hours = float(interval_hours)
+        except (TypeError, ValueError):
+            interval_hours = 12
+        self._cookie_refresh_interval_sec = max(1.0, interval_hours * 3600)
+        self._last_cookie_refresh_at = 0.0
+
+    @staticmethod
+    def _parse_cookie_header(raw: str | None) -> dict[str, str]:
+        cookies: dict[str, str] = {}
+        for line in (raw or "").splitlines():
+            line = line.strip()
+            if not line or (line.startswith("#") and not line.lower().startswith("#httponly_")):
+                continue
+            if "\t" in line:
+                parts = line.split("\t")
+                if len(parts) >= 7:
+                    domain = parts[0].lower().removeprefix("#httponly_").lstrip(".")
+                    if not any(domain == item or domain.endswith("." + item) for item in XHS_COOKIE_DOMAINS):
+                        continue
+                    name, value = parts[5].strip(), parts[6].strip()
+                    if name and value:
+                        cookies[name] = value
+                    continue
+            if line.lower().startswith("cookie:"):
+                line = line.split(":", 1)[1].strip()
+            for part in line.replace("\n", ";").split(";"):
+                if "=" not in part:
+                    continue
+                name, value = part.split("=", 1)
+                name, value = name.strip(), value.strip()
+                if name and value:
+                    cookies[name] = value
+        return cookies
+
+    async def _refresh_user_cookies(self) -> None:
+        if not self._auto_refresh_cookies or not self._cookies:
+            return
+        now = time.monotonic()
+        if now - self._last_cookie_refresh_at < self._cookie_refresh_interval_sec:
+            return
+        self._last_cookie_refresh_at = now
+        try:
+            async with aiohttp.ClientSession(timeout=self.timeout, cookies=self._cookies) as session:
+                async with session.get("https://www.xiaohongshu.com/", headers=_EXPLORE_HEADERS) as resp:
+                    self._capture_cookie_updates(resp)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug("小红书 Cookie 保活请求失败（不影响当前解析）: %s", exc)
+
+    def _capture_cookie_updates(self, response: aiohttp.ClientResponse) -> None:
+        if not self._auto_refresh_cookies or not self._cookies:
+            return
+        host = (response.url.host or "").lower().rstrip(".")
+        updates = parse_set_cookie_updates(
+            response.headers,
+            response_host=host,
+            allowed_hosts=XHS_COOKIE_DOMAINS,
+        )
+        if not updates or not merge_cookie_updates(self._cookies, updates):
+            return
+        self.cookie = serialize_cookie_header(self._cookies)
+        if self._cookie_storage_path is not None:
+            try:
+                atomic_write_cookie_text(self._cookie_storage_path, self.cookie)
+                logger.info("小红书服务端更新的 Cookie 已持久化: %s", self._cookie_storage_path)
+            except Exception as exc:
+                logger.warning("持久化小红书更新 Cookie 失败: %s", exc)
+        if self._cookie_update_callback is not None:
+            try:
+                self._cookie_update_callback(self.cookie)
+            except Exception as exc:
+                logger.debug("同步小红书 Cookie 配置失败: %s", exc)
 
     async def parse(self, text_or_url: str) -> XiaohongshuResult:
         """解析小红书链接"""
+        await self._refresh_user_cookies()
         url = text_or_url.strip()
         if not url.startswith("http"):
             url = "https://" + url
@@ -163,8 +278,9 @@ class XiaohongshuExtractor:
     async def _get_redirect_url(self, url: str) -> str:
         """获取短链接重定向目标（单次重定向）"""
         try:
-            async with aiohttp.ClientSession(timeout=self.timeout, cookies=None) as session:
+            async with aiohttp.ClientSession(timeout=self.timeout, cookies=self._cookies or None) as session:
                 async with session.get(url, headers=XHS_HEADERS, allow_redirects=False) as resp:
+                    self._capture_cookie_updates(resp)
                     if resp.status in (429,) or resp.status >= 500:
                         raise XiaohongshuRetryableError(f"短链接请求临时失败: {resp.status}")
                     if resp.status >= 400:
@@ -181,8 +297,9 @@ class XiaohongshuExtractor:
     async def _parse_explore(self, url: str, note_id: str) -> XiaohongshuResult:
         """解析 explore 页面"""
         try:
-            async with aiohttp.ClientSession(timeout=self.timeout, cookies=None) as session:
+            async with aiohttp.ClientSession(timeout=self.timeout, cookies=self._cookies or None) as session:
                 async with session.get(url, headers=_EXPLORE_HEADERS) as resp:
+                    self._capture_cookie_updates(resp)
                     logger.debug("XHS explore url: %s, status: %s", resp.url, resp.status)
                     if resp.status in (429,) or resp.status >= 500:
                         raise XiaohongshuRetryableError(f"explore 页面临时失败: {resp.status}")
@@ -213,8 +330,9 @@ class XiaohongshuExtractor:
     async def _parse_discovery(self, url: str) -> XiaohongshuResult:
         """解析 discovery 页面"""
         try:
-            async with aiohttp.ClientSession(timeout=self.timeout, cookies=None) as session:
+            async with aiohttp.ClientSession(timeout=self.timeout, cookies=self._cookies or None) as session:
                 async with session.get(url, headers=XHS_HEADERS, allow_redirects=True) as resp:
+                    self._capture_cookie_updates(resp)
                     logger.debug("XHS discovery url: %s, status: %s", resp.url, resp.status)
                     if resp.status in (429,) or resp.status >= 500:
                         raise XiaohongshuRetryableError(f"discovery 页面临时失败: {resp.status}")

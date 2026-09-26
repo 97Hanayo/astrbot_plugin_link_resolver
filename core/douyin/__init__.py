@@ -1,15 +1,25 @@
 # region 导入
 import re
+import time
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import msgspec
+from astrbot.api import logger
 
 from .errors import DouyinParseError
 from .render import DouyinCardRenderer
 from .slides import SlidesInfo
 from .video import RouterData
+from ..common import (
+    atomic_write_cookie_text,
+    merge_cookie_updates,
+    parse_set_cookie_updates,
+    serialize_cookie_header,
+)
 # endregion
 
 # region 常量
@@ -113,11 +123,36 @@ class DouyinExtractor:
         self.timeout = timeout
         self.cookie = ""
         self._cookies: dict[str, str] = {}
+        self._cookie_storage_path: Path | None = None
+        self._cookie_update_callback: Callable[[str], None] | None = None
+        self._auto_refresh_cookies = True
+        self._cookie_refresh_interval_sec = 12 * 60 * 60
+        self._last_cookie_refresh_at = 0.0
 
     def set_cookie(self, cookie: str | None) -> None:
         """设置 Cookie 文本，支持 Cookie header 和 Netscape cookies.txt。"""
         self.cookie = (cookie or "").strip()
         self._cookies = self._parse_cookie_header(self.cookie)
+        self._last_cookie_refresh_at = 0.0
+
+    def set_cookie_storage(
+        self,
+        path: str | Path | None,
+        on_update: Callable[[str], None] | None = None,
+    ) -> None:
+        self._cookie_storage_path = Path(path) if path else None
+        self._cookie_update_callback = on_update
+
+    def configure_cookie_refresh(
+        self, enabled: bool = True, interval_hours: int | float = 12
+    ) -> None:
+        self._auto_refresh_cookies = bool(enabled)
+        try:
+            interval_hours = float(interval_hours)
+        except (TypeError, ValueError):
+            interval_hours = 12
+        self._cookie_refresh_interval_sec = max(1.0, interval_hours * 3600)
+        self._last_cookie_refresh_at = 0.0
 
     def get_cookies(self) -> dict[str, str]:
         """返回供 httpx 使用的 Cookie 字典。"""
@@ -125,6 +160,49 @@ class DouyinExtractor:
 
     def has_cookie(self) -> bool:
         return bool(self._cookies)
+
+    async def _refresh_user_cookies(self) -> None:
+        if not self._auto_refresh_cookies or not self._cookies:
+            return
+        now = time.monotonic()
+        if now - self._last_cookie_refresh_at < self._cookie_refresh_interval_sec:
+            return
+        self._last_cookie_refresh_at = now
+        try:
+            async with httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=self.timeout,
+                headers={**IOS_HEADERS, "Referer": "https://www.douyin.com/"},
+                cookies=self._cookies,
+            ) as client:
+                response = await client.get("https://www.douyin.com/")
+            self._capture_cookie_updates(response)
+        except Exception as exc:
+            logger.debug("抖音 Cookie 保活请求失败（不影响当前解析）: %s", exc)
+
+    def _capture_cookie_updates(self, response: httpx.Response) -> None:
+        if not self._auto_refresh_cookies or not self._cookies:
+            return
+        host = (response.url.host or "").lower().rstrip(".")
+        updates = parse_set_cookie_updates(
+            response.headers,
+            response_host=host,
+            allowed_hosts=DOUYIN_COOKIE_DOMAINS,
+        )
+        if not updates or not merge_cookie_updates(self._cookies, updates):
+            return
+        self.cookie = serialize_cookie_header(self._cookies)
+        if self._cookie_storage_path is not None:
+            try:
+                atomic_write_cookie_text(self._cookie_storage_path, self.cookie)
+                logger.info("抖音服务端更新的 Cookie 已持久化: %s", self._cookie_storage_path)
+            except Exception as exc:
+                logger.warning("持久化抖音更新 Cookie 失败: %s", exc)
+        if self._cookie_update_callback is not None:
+            try:
+                self._cookie_update_callback(self.cookie)
+            except Exception as exc:
+                logger.debug("同步抖音 Cookie 配置失败: %s", exc)
 
     async def resolve_short_url(self, url: str) -> str:
         url = _normalize_url(url)
@@ -140,9 +218,11 @@ class DouyinExtractor:
                     response = await client.get(url)
             except Exception:
                 response = await client.get(url)
+            self._capture_cookie_updates(response)
         return str(response.url)
 
     async def parse(self, text_or_url: str) -> DouyinResult | None:
+        await self._refresh_user_cookies()
         url = _normalize_url(text_or_url)
         if _SHORT_RE.search(url):
             url = await self.resolve_short_url(url)
@@ -280,6 +360,7 @@ class DouyinExtractor:
             cookies=self._cookies or None,
         ) as client:
             response = await client.get(url, params=params)
+        self._capture_cookie_updates(response)
         if response.status_code != 200:
             raise DouyinParseError(f"iteminfo status: {response.status_code}")
 
@@ -368,6 +449,7 @@ class DouyinExtractor:
             cookies=self._cookies or None,
         ) as client:
             response = await client.get(url, params=params)
+        self._capture_cookie_updates(response)
         response.raise_for_status()
 
         slides_data = msgspec.json.decode(response.content, type=SlidesInfo).aweme_details
@@ -466,6 +548,7 @@ class DouyinExtractor:
             cookies=self._cookies or None,
         ) as client:
             response = await client.get(url, follow_redirects=follow_redirects)
+        self._capture_cookie_updates(response)
         if response.status_code != 200:
             raise DouyinParseError(f"status: {response.status_code}")
         return response

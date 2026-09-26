@@ -2,6 +2,12 @@
 __all__ = [
     "PLUGIN_NAME",
     "SizeLimitExceeded",
+    "atomic_write_cookie_text",
+    "host_matches",
+    "merge_cookie_updates",
+    "parse_set_cookie_updates",
+    "serialize_cookie_header",
+    "serialize_netscape_cookies",
     # 路径获取函数
     "get_cache_path",
     "get_playwright_browsers_path",
@@ -12,6 +18,7 @@ __all__ = [
     "get_nga_cookies_file",
     "get_weibo_cookies_file",
     "get_douyin_cookies_file",
+    "get_twitter_cookies_file",
     "get_bilibili_video_path",
     "get_bilibili_thumb_path",
     "get_bilibili_card_path",
@@ -31,6 +38,14 @@ __all__ = [
 ]
 
 from .exceptions import SizeLimitExceeded
+from .cookies import (
+    atomic_write_cookie_text,
+    host_matches,
+    merge_cookie_updates,
+    parse_set_cookie_updates,
+    serialize_cookie_header,
+    serialize_netscape_cookies,
+)
 from .paths import (
     PLUGIN_NAME,
     get_bili_cookies_file,
@@ -43,6 +58,7 @@ from .paths import (
     get_cookies_path,
     get_douyin_card_path,
     get_douyin_cookies_file,
+    get_twitter_cookies_file,
     get_douyin_image_path,
     get_douyin_video_path,
     get_fonts_path,

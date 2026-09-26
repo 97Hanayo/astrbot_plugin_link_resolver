@@ -26,8 +26,12 @@ from astrbot.api.message_components import Image, Node, Nodes, Plain, Video
 
 from ..common import (
     SizeLimitExceeded,
+    atomic_write_cookie_text,
     get_bili_cookies_file,
     get_bilibili_card_path,
+    merge_cookie_updates,
+    parse_set_cookie_updates,
+    serialize_cookie_header,
     get_bilibili_thumb_path,
     get_bilibili_video_path,
 )
@@ -84,6 +88,8 @@ QUALITY_ALIAS_MAP = {
     "360P": "360P",
     "240P": "240P",
 }
+
+_BILI_COOKIE_DOMAINS = ("bilibili.com", "hdslb.com")
 
 CODECS_ALIAS_MAP = {
     "AVC": "AVC",
@@ -470,6 +476,37 @@ class BilibiliMixin:
                 return cookies
         return {}
 
+    def _capture_bili_cookie_updates(self, response: httpx.Response, cookies: dict[str, str]) -> None:
+        if not getattr(self, "bili_auto_refresh_cookies", True) or not cookies:
+            return
+        now = time.monotonic()
+        interval_hours = getattr(self, "bili_cookie_refresh_interval_hours", 12)
+        last_refresh = getattr(self, "_last_bili_cookie_refresh_at", 0.0)
+        if now - last_refresh < max(1, float(interval_hours)) * 3600:
+            return
+        self._last_bili_cookie_refresh_at = now
+        host = (response.url.host or "").lower().rstrip(".")
+        updates = parse_set_cookie_updates(
+            response.headers,
+            response_host=host,
+            allowed_hosts=_BILI_COOKIE_DOMAINS,
+        )
+        if not updates or not merge_cookie_updates(cookies, updates):
+            return
+        cookie_text = serialize_cookie_header(cookies)
+        storage_path = getattr(self, "bili_cookie_storage_path", get_bili_cookies_file())
+        try:
+            atomic_write_cookie_text(storage_path, cookie_text)
+            logger.info("🍪 B站服务端更新的 Cookie 已持久化: %s", storage_path)
+        except Exception as exc:
+            logger.warning("⚠️ 持久化 B站更新 Cookie 失败: %s", exc)
+        callback = getattr(self, "_on_bili_cookie_updated", None)
+        if callback is not None:
+            try:
+                callback(cookie_text)
+            except Exception as exc:
+                logger.debug("同步 B站 Cookie 配置失败: %s", exc)
+
     def _build_credential(self, cookies: dict[str, str]) -> Credential:
         if not cookies:
             return Credential(sessdata=None)
@@ -494,6 +531,7 @@ class BilibiliMixin:
                 response = await client.get(
                     "https://api.bilibili.com/x/web-interface/nav"
                 )
+            self._capture_bili_cookie_updates(response, cookies)
             if response.status_code != 200:
                 return CookieStatus(False, None, None, f"HTTP {response.status_code}")
             data = response.json()
@@ -1030,8 +1068,8 @@ class BilibiliMixin:
         await self._send_reaction_emoji(event, source_tag)
 
         cookies = self._load_cookies()
-        credential = self._build_credential(cookies)
         cookie_status = await self._check_cookie_status(cookies)
+        credential = self._build_credential(cookies)
         logger.debug(
             "🍪 Cookie检测%s: 登录=%s, 会员=%s, vipType=%s, 状态=%s",
             source_tag,

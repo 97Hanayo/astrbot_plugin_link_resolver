@@ -23,6 +23,7 @@ from .core.common import (
     get_nga_cookies_file,
     get_weibo_cookies_file,
     get_xhs_cookies_file,
+    get_twitter_cookies_file,
 )
 from .core.common.card_renderer import find_default_font, find_emoji_font
 from .core.common.font_manager import (
@@ -34,7 +35,12 @@ from .core.common.font_manager import (
 )
 from .core.douyin import DOUYIN_MESSAGE_PATTERN, DouyinExtractor
 from .core.douyin.handler import DouyinMixin
-from .core.nga import NGA_MESSAGE_PATTERN, NgaMixin, NgaScreenshotter
+from .core.nga import (
+    NGA_MESSAGE_PATTERN,
+    NgaMixin,
+    NgaScreenshotter,
+    parse_nga_cookies,
+)
 from .core.twitter import TWITTER_MESSAGE_PATTERN, TwitterExtractor
 from .core.twitter.handler import TwitterMixin
 from .core.weibo import WEIBO_MESSAGE_PATTERN, WeiboExtractor
@@ -195,15 +201,32 @@ class LinkResolverPlugin(
         self.allow_quality_fallback = bool(
             self._get_config_value("bili_settings.allow_quality_fallback", True)
         )
-        # 从配置读取 Cookie 并写入文件
+        self.bili_auto_refresh_cookies = bool(
+            self._get_config_value("bili_settings.auto_refresh_cookies", True)
+        )
+        self.bili_cookie_refresh_interval_hours = max(
+            1,
+            min(
+                168,
+                int(self._get_config_value("bili_settings.cookie_refresh_interval_hours", 12)),
+            ),
+        )
         bili_cookies_str = str(
             self._get_config_value("bili_settings.cookies", "")
         ).strip()
-        if bili_cookies_str:
+        bili_cookies_file = get_bili_cookies_file()
+        persisted_bili_cookies = ""
+        if bili_cookies_file.exists():
             try:
-                cookies_file = get_bili_cookies_file()
-                cookies_file.parent.mkdir(parents=True, exist_ok=True)
-                # 恢复 Netscape 格式的换行符（网页配置粘贴时可能丢失）
+                persisted_bili_cookies = bili_cookies_file.read_text(encoding="utf-8").strip()
+            except Exception as exc:
+                logger.warning("⚠️ 读取 B站 Cookie 文件失败: %s", str(exc))
+        if persisted_bili_cookies and self._load_cookies_from_file(bili_cookies_file):
+            bili_cookies_str = persisted_bili_cookies
+            logger.info("🍪 使用已持久化的 B站 Cookie: %s", bili_cookies_file)
+        elif bili_cookies_str:
+            try:
+                bili_cookies_file.parent.mkdir(parents=True, exist_ok=True)
                 if "\n" not in bili_cookies_str and ".bilibili.com" in bili_cookies_str:
                     bili_cookies_str = re.sub(
                         r"\s+(\.(?:www\.)?bilibili\.com\s)",
@@ -211,10 +234,11 @@ class LinkResolverPlugin(
                         bili_cookies_str,
                     )
                     bili_cookies_str = bili_cookies_str.replace("# ", "\n# ").strip()
-                cookies_file.write_text(bili_cookies_str, encoding="utf-8")
+                bili_cookies_file.write_text(bili_cookies_str, encoding="utf-8")
                 logger.info("🍪 B站 Cookie 已从配置写入文件")
             except Exception as exc:
                 logger.warning("⚠️ 写入 B站 Cookie 文件失败: %s", str(exc))
+        self.bili_cookie_storage_path = bili_cookies_file
 
         # 抖音配置
         self.douyin_max_media = max(
@@ -227,14 +251,32 @@ class LinkResolverPlugin(
             "douyin_settings.summary_mode"
         )
         self.douyin_render_card = self.douyin_summary_mode == SUMMARY_MODE_CARD
+        self.douyin_auto_refresh_cookies = bool(
+            self._get_config_value("douyin_settings.auto_refresh_cookies", True)
+        )
+        self.douyin_cookie_refresh_interval_hours = max(
+            1,
+            min(
+                168,
+                int(self._get_config_value("douyin_settings.cookie_refresh_interval_hours", 12)),
+            ),
+        )
         douyin_cookies_str = str(
             self._get_config_value("douyin_settings.cookies", "")
         ).strip()
         douyin_cookies_file = get_douyin_cookies_file()
-        if douyin_cookies_str:
+        persisted_douyin_cookies = ""
+        if douyin_cookies_file.exists():
+            try:
+                persisted_douyin_cookies = douyin_cookies_file.read_text(encoding="utf-8").strip()
+            except Exception as exc:
+                logger.warning("⚠️ 读取抖音 Cookie 文件失败: %s", str(exc))
+        if persisted_douyin_cookies and DouyinExtractor._parse_cookie_header(persisted_douyin_cookies):
+            douyin_cookies_str = persisted_douyin_cookies
+            logger.info("🍪 使用已持久化的抖音 Cookie: %s", douyin_cookies_file)
+        elif douyin_cookies_str:
             try:
                 douyin_cookies_file.parent.mkdir(parents=True, exist_ok=True)
-                # 管理面板可能把 cookies.txt 的换行折叠为空格，恢复抖音域名行。
                 if "\n" not in douyin_cookies_str and "douyin.com" in douyin_cookies_str:
                     douyin_cookies_str = re.sub(
                         r"\s+((?:#HttpOnly_)?\.?(?:(?:www\.)?douyin\.com|(?:www\.)?iesdouyin\.com)\s)",
@@ -246,18 +288,17 @@ class LinkResolverPlugin(
                 logger.info("🍪 抖音 Cookie 已从配置写入文件")
             except Exception as exc:
                 logger.warning("⚠️ 写入抖音 Cookie 文件失败: %s", str(exc))
-        else:
-            try:
-                if douyin_cookies_file.exists():
-                    douyin_cookies_str = douyin_cookies_file.read_text(
-                        encoding="utf-8"
-                    ).strip()
-                    if douyin_cookies_str:
-                        logger.info("🍪 使用文件读取抖音 Cookie: %s", douyin_cookies_file)
-            except Exception as exc:
-                logger.warning("⚠️ 读取抖音 Cookie 文件失败: %s", str(exc))
         douyin_extractor = getattr(self, "douyin_extractor", None)
         if douyin_extractor is not None:
+            if hasattr(douyin_extractor, "set_cookie_storage"):
+                douyin_extractor.set_cookie_storage(
+                    douyin_cookies_file, self._on_douyin_cookie_updated
+                )
+            if hasattr(douyin_extractor, "configure_cookie_refresh"):
+                douyin_extractor.configure_cookie_refresh(
+                    self.douyin_auto_refresh_cookies,
+                    self.douyin_cookie_refresh_interval_hours,
+                )
             douyin_extractor.set_cookie(douyin_cookies_str)
             self.douyin_cookies = douyin_extractor.get_cookies()
             self.douyin_cookie_enabled = douyin_extractor.has_cookie()
@@ -350,6 +391,61 @@ class LinkResolverPlugin(
         self.twitter_merge_send = bool(
             self._get_config_value("twitter_settings.merge_send", False)
         )
+        self.twitter_auto_refresh_cookies = bool(
+            self._get_config_value("twitter_settings.auto_refresh_cookies", True)
+        )
+        self.twitter_cookie_refresh_interval_hours = max(
+            1,
+            min(
+                168,
+                int(self._get_config_value("twitter_settings.cookie_refresh_interval_hours", 12)),
+            ),
+        )
+        twitter_cookies_str = str(
+            self._get_config_value("twitter_settings.cookies", "")
+        ).strip()
+        twitter_cookies_file = get_twitter_cookies_file()
+        persisted_twitter_cookies = ""
+        if twitter_cookies_file.exists():
+            try:
+                persisted_twitter_cookies = twitter_cookies_file.read_text(encoding="utf-8").strip()
+            except Exception as exc:
+                logger.warning("⚠️ 读取 X Cookie 文件失败: %s", str(exc))
+        twitter_extractor = getattr(self, "twitter_extractor", None)
+        if persisted_twitter_cookies:
+            try:
+                has_persisted = bool(
+                    (twitter_extractor is None)
+                    or twitter_extractor._parse_cookie_header(persisted_twitter_cookies)
+                )
+            except Exception:
+                has_persisted = bool(persisted_twitter_cookies)
+            if has_persisted:
+                twitter_cookies_str = persisted_twitter_cookies
+                logger.info("🍪 使用已持久化的 X Cookie: %s", twitter_cookies_file)
+        elif twitter_cookies_str:
+            try:
+                twitter_cookies_file.parent.mkdir(parents=True, exist_ok=True)
+                twitter_cookies_file.write_text(twitter_cookies_str, encoding="utf-8")
+                logger.info("🍪 X Cookie 已从配置写入文件")
+            except Exception as exc:
+                logger.warning("⚠️ 写入 X Cookie 文件失败: %s", str(exc))
+        if twitter_extractor is not None:
+            if hasattr(twitter_extractor, "set_cookie_storage"):
+                twitter_extractor.set_cookie_storage(
+                    twitter_cookies_file, self._on_twitter_cookie_updated
+                )
+            if hasattr(twitter_extractor, "configure_cookie_refresh"):
+                twitter_extractor.configure_cookie_refresh(
+                    self.twitter_auto_refresh_cookies,
+                    self.twitter_cookie_refresh_interval_hours,
+                )
+            if hasattr(twitter_extractor, "set_cookie"):
+                twitter_extractor.set_cookie(twitter_cookies_str)
+        self.twitter_cookie_enabled = bool(
+            twitter_extractor is not None
+            and getattr(twitter_extractor, "has_cookie", lambda: False)()
+        )
 
         # NGA 配置
         self.nga_merge_send = bool(
@@ -358,9 +454,28 @@ class LinkResolverPlugin(
         self.nga_max_attachment_images = max(
             0, int(self._get_config_value("nga_settings.max_attachment_images", 9))
         )
+        self.nga_auto_refresh_cookies = bool(
+            self._get_config_value("nga_settings.auto_refresh_cookies", True)
+        )
+        self.nga_cookie_refresh_interval_hours = max(
+            1,
+            min(
+                168,
+                int(self._get_config_value("nga_settings.cookie_refresh_interval_hours", 12)),
+            ),
+        )
         self.nga_cookies = str(self._get_config_value("nga_settings.cookies", "")).strip()
         nga_cookies_file = get_nga_cookies_file()
-        if self.nga_cookies:
+        persisted_nga_cookies = ""
+        if nga_cookies_file.exists():
+            try:
+                persisted_nga_cookies = nga_cookies_file.read_text(encoding="utf-8").strip()
+            except Exception as exc:
+                logger.warning("⚠️ 读取 NGA Cookie 文件失败: %s", str(exc))
+        if persisted_nga_cookies and parse_nga_cookies(persisted_nga_cookies):
+            self.nga_cookies = persisted_nga_cookies
+            logger.info("🍪 使用已持久化的 NGA Cookie: %s", nga_cookies_file)
+        elif self.nga_cookies:
             try:
                 nga_cookies_file.parent.mkdir(parents=True, exist_ok=True)
                 if "\n" not in self.nga_cookies and ".ngabbs.com" in self.nga_cookies:
@@ -374,14 +489,6 @@ class LinkResolverPlugin(
                 logger.info("🍪 NGA Cookie 已从配置写入文件")
             except Exception as exc:
                 logger.warning("⚠️ 写入 NGA Cookie 文件失败: %s", str(exc))
-        else:
-            try:
-                if nga_cookies_file.exists():
-                    self.nga_cookies = nga_cookies_file.read_text(encoding="utf-8").strip()
-                    if self.nga_cookies:
-                        logger.info("🍪 使用文件读取 NGA Cookie: %s", nga_cookies_file)
-            except Exception as exc:
-                logger.warning("⚠️ 读取 NGA Cookie 文件失败: %s", str(exc))
 
         # 小红书配置
         self.xhs_max_media = max(
@@ -423,16 +530,31 @@ class LinkResolverPlugin(
             if _xhs_comment_mode in XHS_COMMENT_MODES
             else COMMENT_MODE_WEB
         )
+        self.xhs_auto_refresh_cookies = bool(
+            self._get_config_value("xhs_settings.auto_refresh_cookies", True)
+        )
+        self.xhs_cookie_refresh_interval_hours = max(
+            1,
+            min(
+                168,
+                int(self._get_config_value("xhs_settings.cookie_refresh_interval_hours", 12)),
+            ),
+        )
         self.xhs_cookies = str(self._get_config_value("xhs_settings.cookies", "")).strip()
         xhs_cookies_file = get_xhs_cookies_file()
-        if self.xhs_cookies:
+        persisted_xhs_cookies = ""
+        if xhs_cookies_file.exists():
+            try:
+                persisted_xhs_cookies = xhs_cookies_file.read_text(encoding="utf-8").strip()
+            except Exception as exc:
+                logger.warning("⚠️ 读取小红书 Cookie 文件失败: %s", str(exc))
+        if persisted_xhs_cookies and XiaohongshuExtractor._parse_cookie_header(persisted_xhs_cookies):
+            self.xhs_cookies = persisted_xhs_cookies
+            logger.info("🍪 使用已持久化的小红书 Cookie: %s", xhs_cookies_file)
+        elif self.xhs_cookies:
             try:
                 xhs_cookies_file.parent.mkdir(parents=True, exist_ok=True)
-                # 恢复 Netscape 格式的换行符（网页配置粘贴时可能丢失）
-                if (
-                    "\n" not in self.xhs_cookies
-                    and ".xiaohongshu.com" in self.xhs_cookies
-                ):
+                if "\n" not in self.xhs_cookies and ".xiaohongshu.com" in self.xhs_cookies:
                     self.xhs_cookies = re.sub(
                         r"\s+(\.?(?:www\.)?xiaohongshu\.com\s)",
                         r"\n\1",
@@ -443,16 +565,19 @@ class LinkResolverPlugin(
                 logger.info("🍪 小红书 Cookie 已从配置写入文件")
             except Exception as exc:
                 logger.warning("⚠️ 写入小红书 Cookie 文件失败: %s", str(exc))
-        else:
-            try:
-                if xhs_cookies_file.exists():
-                    self.xhs_cookies = xhs_cookies_file.read_text(
-                        encoding="utf-8"
-                    ).strip()
-                    if self.xhs_cookies:
-                        logger.info("🍪 使用文件读取小红书 Cookie: %s", xhs_cookies_file)
-            except Exception as exc:
-                logger.warning("⚠️ 读取小红书 Cookie 文件失败: %s", str(exc))
+        xhs_extractor = getattr(self, "xhs_extractor", None)
+        if xhs_extractor is not None:
+            if hasattr(xhs_extractor, "set_cookie_storage"):
+                xhs_extractor.set_cookie_storage(
+                    xhs_cookies_file, self._on_xhs_cookie_updated
+                )
+            if hasattr(xhs_extractor, "configure_cookie_refresh"):
+                xhs_extractor.configure_cookie_refresh(
+                    self.xhs_auto_refresh_cookies,
+                    self.xhs_cookie_refresh_interval_hours,
+                )
+            if hasattr(xhs_extractor, "set_cookie"):
+                xhs_extractor.set_cookie(self.xhs_cookies)
 
         # 通用配置
         self.retry_count = max(
@@ -577,7 +702,49 @@ class LinkResolverPlugin(
         self.xhs_comment_screenshotter = XiaohongshuCommentScreenshotter(
             self.default_primary_font
         )
+        if hasattr(self.xhs_comment_screenshotter, "set_cookie_storage"):
+            self.xhs_comment_screenshotter.set_cookie_storage(
+                xhs_cookies_file, self._on_xhs_cookie_updated
+            )
+        if hasattr(self.xhs_comment_screenshotter, "configure_cookie_refresh"):
+            self.xhs_comment_screenshotter.configure_cookie_refresh(
+                self.xhs_auto_refresh_cookies,
+                self.xhs_cookie_refresh_interval_hours,
+            )
         self.nga_screenshotter = NgaScreenshotter()
+        if hasattr(self.nga_screenshotter, "set_cookie_storage"):
+            self.nga_screenshotter.set_cookie_storage(
+                nga_cookies_file, self._on_nga_cookie_updated
+            )
+        if hasattr(self.nga_screenshotter, "configure_cookie_refresh"):
+            self.nga_screenshotter.configure_cookie_refresh(
+                self.nga_auto_refresh_cookies,
+                self.nga_cookie_refresh_interval_hours,
+            )
+
+    def _set_cookie_config(self, section: str, cookie: str) -> None:
+        settings = self.config.get(section) if isinstance(self.config, dict) else None
+        if isinstance(settings, dict):
+            settings["cookies"] = cookie
+
+    def _on_bili_cookie_updated(self, cookie: str) -> None:
+        self._set_cookie_config("bili_settings", cookie)
+
+    def _on_douyin_cookie_updated(self, cookie: str) -> None:
+        self._set_cookie_config("douyin_settings", cookie)
+        extractor = getattr(self, "douyin_extractor", None)
+        if extractor is not None and hasattr(extractor, "get_cookies"):
+            self.douyin_cookies = extractor.get_cookies()
+
+    def _on_xhs_cookie_updated(self, cookie: str) -> None:
+        self._set_cookie_config("xhs_settings", cookie)
+        self.xhs_cookies = cookie
+
+    def _on_twitter_cookie_updated(self, cookie: str) -> None:
+        self._set_cookie_config("twitter_settings", cookie)
+
+    def _on_nga_cookie_updated(self, cookie: str) -> None:
+        self._set_cookie_config("nga_settings", cookie)
 
     def _on_weibo_cookie_updated(self, cookie: str) -> None:
         """同步服务端续期后的 Cookie 到当前可变配置对象。"""

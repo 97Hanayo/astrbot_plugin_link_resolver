@@ -83,6 +83,20 @@
                 "min": 0,
                 "max": 86400
             },
+            "auto_refresh_cookies": {
+                "description": "自动续期B站Cookies",
+                "type": "bool",
+                "hint": "开启后解析链接时定期访问 B 站并保存服务端真实下发的 Set-Cookie；不会伪造或延长 Cookie 有效期。",
+                "default": true
+            },
+            "cookie_refresh_interval_hours": {
+                "description": "Cookie续期间隔(小时)",
+                "type": "int",
+                "hint": "B 站登录 Cookie 保活请求的最短间隔，建议 6~24 小时。",
+                "default": 12,
+                "min": 1,
+                "max": 168
+            },
             "cookies": {
                 "description": "B站Cookies",
                 "type": "string",
@@ -118,6 +132,20 @@
                     "文字摘要",
                     "渲染卡片"
                 ]
+            },
+            "auto_refresh_cookies": {
+                "description": "自动续期抖音Cookies",
+                "type": "bool",
+                "hint": "开启后解析链接时定期访问抖音并保存服务端真实下发的 Set-Cookie；不会伪造或延长 Cookie 有效期。",
+                "default": true
+            },
+            "cookie_refresh_interval_hours": {
+                "description": "Cookie续期间隔(小时)",
+                "type": "int",
+                "hint": "抖音登录 Cookie 保活请求的最短间隔，建议 6~24 小时。",
+                "default": 12,
+                "min": 1,
+                "max": 168
             },
             "cookies": {
                 "description": "抖音Cookies",
@@ -190,6 +218,26 @@
                 "type": "bool",
                 "hint": "仅对单视频推文生效。开启时发送摘要+视频的合并转发；关闭时只发送单独视频。图文、多视频、混合媒体推文始终合并转发。",
                 "default": false
+            },
+            "auto_refresh_cookies": {
+                "description": "自动续期X Cookies",
+                "type": "bool",
+                "hint": "开启后解析链接时定期访问 x.com 并保存服务端真实下发的 Set-Cookie；Cookie 不会发送给第三方解析接口。",
+                "default": true
+            },
+            "cookie_refresh_interval_hours": {
+                "description": "Cookie续期间隔(小时)",
+                "type": "int",
+                "hint": "X 登录 Cookie 保活请求的最短间隔，建议 6~24 小时。",
+                "default": 12,
+                "min": 1,
+                "max": 168
+            },
+            "cookies": {
+                "description": "X Cookies",
+                "type": "string",
+                "hint": "可选。支持 cookies.txt 或 k=v;... Cookie 字符串；填写后会保存到 cookies/twitter_cookies.txt，x.com 服务端更新的 Cookie 也会写回该文件。",
+                "default": ""
             }
         }
     },
@@ -210,6 +258,20 @@
                 "default": 9,
                 "min": 0,
                 "max": 50
+            },
+            "auto_refresh_cookies": {
+                "description": "自动续期NGA Cookies",
+                "type": "bool",
+                "hint": "开启后打开 NGA 链接时保存浏览器会话中服务端真实下发的 Cookie；不会伪造或延长 Cookie 有效期。",
+                "default": true
+            },
+            "cookie_refresh_interval_hours": {
+                "description": "Cookie续期间隔(小时)",
+                "type": "int",
+                "hint": "NGA 登录 Cookie 会话保存的最短间隔，建议 6~24 小时。",
+                "default": 12,
+                "min": 1,
+                "max": 168
             },
             "cookies": {
                 "description": "NGA Cookies",
@@ -302,6 +364,20 @@
                     "网页截图",
                     "自绘评论图"
                 ]
+            },
+            "auto_refresh_cookies": {
+                "description": "自动续期小红书Cookies",
+                "type": "bool",
+                "hint": "开启后解析链接时定期访问小红书并保存服务端真实下发的 Set-Cookie；不会伪造或延长 Cookie 有效期。",
+                "default": true
+            },
+            "cookie_refresh_interval_hours": {
+                "description": "Cookie续期间隔(小时)",
+                "type": "int",
+                "hint": "小红书登录 Cookie 保活请求的最短间隔，建议 6~24 小时。",
+                "default": 12,
+                "min": 1,
+                "max": 168
             },
             "cookies": {
                 "description": "小红书Cookies",

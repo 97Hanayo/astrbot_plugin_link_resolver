@@ -92,7 +92,9 @@ ffmpeg -version
 | `bili_settings.enable_multi_page` | 启用多P视频下载 | ✅ 开启 |
 | `bili_settings.multi_page_max` | 多P最多下载数量 | 3 |
 | `bili_settings.max_duration_seconds` | 最大视频时长(秒)，超过即忽略 | 300 |
-| `bili_settings.cookies` | B站 Cookies 文本 | 空 |
+| `bili_settings.auto_refresh_cookies` | 定期访问 B 站并保存服务端续期 Cookie | ✅ 开启 |
+| `bili_settings.cookie_refresh_interval_hours` | Cookie 保活请求最短间隔（小时） | 12 |
+| `bili_settings.cookies` | B站 Cookies 文本，留空时读取文件 | 空 |
 
 ### 抖音设置
 
@@ -101,6 +103,8 @@ ffmpeg -version
 | `douyin_settings.max_media` | 图集最多发送媒体数 | 99 |
 | `douyin_settings.merge_send` | 视频使用合并转发 | ❌ 关闭 |
 | `douyin_settings.summary_mode` | 合并发送时使用 `文字摘要` 或 `渲染卡片` | `文字摘要` |
+| `douyin_settings.auto_refresh_cookies` | 定期访问抖音并保存服务端续期 Cookie | ✅ 开启 |
+| `douyin_settings.cookie_refresh_interval_hours` | Cookie 保活请求最短间隔（小时） | 12 |
 | `douyin_settings.cookies` | 抖音 Cookies 文本，留空时读取文件 | 空 |
 
 ### 微博设置
@@ -129,7 +133,9 @@ ffmpeg -version
 | `xhs_settings.enable_comment_screenshot` | 开启评论截图，插入在摘要后、媒体前 | ❌ 关闭 |
 | `xhs_settings.comment_screenshot_max` | 最多截图评论条数，`0` 表示不限制 | 20 |
 | `xhs_settings.comment_screenshot_mode` | `网页截图` 或 `自绘评论图` | `网页截图` |
-| `xhs_settings.cookies` | 小红书 Cookies 文本，用于登录态评论 | 空 |
+| `xhs_settings.auto_refresh_cookies` | 定期访问小红书并保存服务端续期 Cookie | ✅ 开启 |
+| `xhs_settings.cookie_refresh_interval_hours` | Cookie 保活请求最短间隔（小时） | 12 |
+| `xhs_settings.cookies` | 小红书 Cookies 文本，留空时读取文件 | 空 |
 
 ### X 设置
 
@@ -137,6 +143,9 @@ ffmpeg -version
 |--------|------|--------|
 | `twitter_settings.max_media` | 单条推文最多发送媒体数 | 99 |
 | `twitter_settings.merge_send` | 单视频推文使用合并转发 | ❌ 关闭 |
+| `twitter_settings.auto_refresh_cookies` | 定期访问 x.com 并保存服务端续期 Cookie | ✅ 开启 |
+| `twitter_settings.cookie_refresh_interval_hours` | Cookie 保活请求最短间隔（小时） | 12 |
+| `twitter_settings.cookies` | X Cookies 文本，留空时读取文件 | 空 |
 
 ### NGA 设置
 
@@ -144,6 +153,8 @@ ffmpeg -version
 |--------|------|--------|
 | `nga_settings.merge_send` | 使用合并转发发送来源链接、网页截图和附件图 | ❌ 关闭 |
 | `nga_settings.max_attachment_images` | 从主楼/热点区域下载并追加发送的附件图片数量，`0` 表示只发网页截图 | 9 |
+| `nga_settings.auto_refresh_cookies` | 打开 NGA 链接时保存浏览器会话中的服务端 Cookie | ✅ 开启 |
+| `nga_settings.cookie_refresh_interval_hours` | Cookie 会话保存最短间隔（小时） | 12 |
 | `nga_settings.cookies` | NGA Cookies 文本，用于登录态页面截图 | 空 |
 
 
@@ -224,6 +235,7 @@ data/plugin_data/astrbot_plugin_link_resolver/
 - 小红书：`data/plugin_data/astrbot_plugin_link_resolver/cookies/xhs_cookies.txt`
 - 抖音：`data/plugin_data/astrbot_plugin_link_resolver/cookies/douyin_cookies.txt`
 - NGA：`data/plugin_data/astrbot_plugin_link_resolver/cookies/nga_cookies.txt`
+- X：`data/plugin_data/astrbot_plugin_link_resolver/cookies/twitter_cookies.txt`
 
 ### 微博 Cookie（可选）
 
@@ -241,6 +253,18 @@ SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 ### 抖音 Cookie（可选）
 
 抖音解析遇到登录态、风控或接口返回为空时，可以在管理面板的 `douyin_settings.cookies` 粘贴浏览器 Cookie，或把导出的 `cookies.txt` 保存到 `cookies/douyin_cookies.txt`。支持 Netscape `cookies.txt` 和 `a=1; b=2` 形式；配置留空时自动读取该文件。
+
+### B站、抖音、小红书 Cookie 自动续期
+
+B站、抖音和小红书在解析链接时会按对应刷新间隔访问本站点，捕获服务端真实返回的 `Set-Cookie`，并原子写回各自的 Cookie 文件。插件重载时优先使用已持久化的文件内容；不会伪造或延长 Cookie 有效期，若账号注销或服务端不再续期，仍需重新导出 Cookie。
+
+### X Cookie（可选）
+
+`twitter_settings.cookies` 只用于访问 `x.com` 自身的保活页面并保存服务端更新，Cookie 不会发送给当前使用的第三方 `api.fxtwitter.com` 解析接口。文件路径为 `cookies/twitter_cookies.txt`。
+
+### NGA Cookie 自动续期
+
+NGA 使用 Playwright 打开帖子；开启自动续期后，会按刷新间隔把浏览器会话中本站真实 Cookie 以 Netscape 格式原子写回 `cookies/nga_cookies.txt`。不会伪造 Cookie 有效期。
 
 ### 小红书 Cookie 与评论截图（可选）
 

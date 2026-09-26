@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import logging
+import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+from ..common import atomic_write_cookie_text, serialize_netscape_cookies
 from ..common.image_compression import (
     DEFAULT_MAX_IMAGE_BYTES,
     DEFAULT_MAX_IMAGE_HEIGHT,
@@ -156,6 +158,55 @@ def _parse_cookie_header(raw: str) -> list[dict[str, Any]]:
 
 
 class NgaScreenshotter:
+    def __init__(self) -> None:
+        self._cookie_storage_path: Path | None = None
+        self._cookie_update_callback = None
+        self._auto_refresh_cookies = True
+        self._cookie_refresh_interval_sec = 12 * 60 * 60
+        self._last_cookie_refresh_at = 0.0
+
+    def set_cookie_storage(self, path: str | Path | None, on_update=None) -> None:
+        self._cookie_storage_path = Path(path) if path else None
+        self._cookie_update_callback = on_update
+
+    def configure_cookie_refresh(
+        self, enabled: bool = True, interval_hours: int | float = 12
+    ) -> None:
+        self._auto_refresh_cookies = bool(enabled)
+        try:
+            interval_hours = float(interval_hours)
+        except (TypeError, ValueError):
+            interval_hours = 12
+        self._cookie_refresh_interval_sec = max(1.0, interval_hours * 3600)
+        self._last_cookie_refresh_at = 0.0
+
+    async def _capture_context_cookies(self, context, has_user_cookie: bool) -> None:
+        if not self._auto_refresh_cookies or not has_user_cookie:
+            return
+        if self._cookie_storage_path is None:
+            return
+        now = time.monotonic()
+        if now - self._last_cookie_refresh_at < self._cookie_refresh_interval_sec:
+            return
+        self._last_cookie_refresh_at = now
+        try:
+            cookies = [
+                cookie
+                for cookie in await context.cookies()
+                if _is_nga_cookie(cookie)
+            ]
+            if not cookies:
+                return
+            cookie_text = serialize_netscape_cookies(cookies)
+            atomic_write_cookie_text(self._cookie_storage_path, cookie_text)
+            logger.info("NGA 服务端更新的 Cookie 已持久化: %s", self._cookie_storage_path)
+            if self._cookie_update_callback is not None:
+                self._cookie_update_callback(cookie_text)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug("持久化 NGA Cookie 失败: %s", exc)
+
     async def capture(
         self,
         *,
@@ -203,6 +254,7 @@ class NgaScreenshotter:
                     paths = await self._capture_sections(page, output_dir, request_id)
                     return NgaCaptureResult(paths, image_urls)
                 finally:
+                    await self._capture_context_cookies(context, bool(cookies))
                     await context.close()
             finally:
                 await browser.close()

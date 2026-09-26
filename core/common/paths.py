@@ -85,6 +85,10 @@ def get_weibo_cookies_file() -> Path:
     return get_cookies_path() / "weibo_cookies.txt"
 
 
+def get_twitter_cookies_file() -> Path:
+    """获取 X Cookies 文件路径"""
+    return get_cookies_path() / "twitter_cookies.txt"
+
 def get_douyin_cookies_file() -> Path:
     """获取抖音 Cookies 文件路径"""
     return get_cookies_path() / "douyin_cookies.txt"
