@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -22,6 +22,15 @@ from ..common import (
 # region 常量
 XHS_REQUEST_TIMEOUT_SEC = 30.0
 XHS_COOKIE_DOMAINS = ("xiaohongshu.com",)
+XHS_VIDEO_QUALITY_OPTIONS = ("360P", "480P", "720P", "1080P", "2K", "4K")
+XHS_VIDEO_QUALITY_LIMITS = {
+    "360P": 360,
+    "480P": 480,
+    "720P": 720,
+    "1080P": 1080,
+    "2K": 1440,
+    "4K": 2160,
+}
 XHS_SHORT_LINK_PATTERN = r"(?:https?://)?(?:www\.)?xhslink\.(?:com|cn)/[A-Za-z0-9._?%&+=/#@-]+"
 XHS_MESSAGE_PATTERN = (
     r"(?s).*(?:"
@@ -100,6 +109,24 @@ def extract_xhs_links(text: str) -> list[str]:
 
 # region 数据类
 @dataclass(slots=True)
+class XiaohongshuVideoStream:
+    """小红书视频的一个清晰度/编码流。"""
+
+    url: str
+    width: int = 0
+    height: int = 0
+    size: int | None = None
+    codec: str = ""
+    quality: str = ""
+
+    @property
+    def nominal_resolution(self) -> int:
+        """返回不受横竖屏方向影响的名义分辨率。"""
+        dimensions = [value for value in (self.width, self.height) if value > 0]
+        return min(dimensions) if dimensions else 0
+
+
+@dataclass(slots=True)
 class XiaohongshuResult:
     title: str | None
     author: str | None
@@ -110,6 +137,7 @@ class XiaohongshuResult:
     cover_url: str | None
     source_url: str
     note_id: str | None = None
+    video_streams: list[XiaohongshuVideoStream] = field(default_factory=list)
 
 
 class XiaohongshuParseError(RuntimeError):
@@ -138,6 +166,7 @@ class XiaohongshuExtractor:
         self._auto_refresh_cookies = True
         self._cookie_refresh_interval_sec = 12 * 60 * 60
         self._last_cookie_refresh_at = 0.0
+        self.max_video_quality = "720P"
 
     def set_cookie(self, cookie: str | None) -> None:
         self.cookie = (cookie or "").strip()
@@ -149,6 +178,13 @@ class XiaohongshuExtractor:
 
     def has_cookie(self) -> bool:
         return bool(self._cookies)
+
+    def set_max_video_quality(self, quality: str | None) -> None:
+        """设置视频下载的最大清晰度。"""
+        normalized = str(quality or "720P").strip().upper()
+        self.max_video_quality = (
+            normalized if normalized in XHS_VIDEO_QUALITY_OPTIONS else "720P"
+        )
 
     def set_cookie_storage(
         self,
@@ -367,6 +403,8 @@ class XiaohongshuExtractor:
             raise XiaohongshuParseError("小红书分享链接失效或内容已删除")
 
         json_str = match.group(1).replace("undefined", "null")
+        # 登录态页面有时会把空 Map 直接序列化成 JS 表达式，先转成 JSON 对象。
+        json_str = re.sub(r"new Map\(\s*(?:\[\s*\])?\s*\)", "{}", json_str)
         try:
             return json.loads(json_str)
         except json.JSONDecodeError as e:
@@ -407,7 +445,9 @@ class XiaohongshuExtractor:
         logger.debug("XHS Extracted file_ids: %s", file_ids)
 
         # 视频
-        video_url = self._extract_video_url(note)
+        video_streams = self._extract_video_streams(note)
+        selected_stream = self._select_video_stream(video_streams)
+        video_url = selected_stream.url if selected_stream else None
 
         # 封面（视频的第一帧或第一张图片）
         cover_url = None
@@ -440,6 +480,7 @@ class XiaohongshuExtractor:
             cover_url=cover_url,
             source_url=source_url,
             note_id=note_id,
+            video_streams=video_streams,
         )
 
     def _get_original_image_url(self, img: dict[str, Any]) -> str | None:
@@ -510,31 +551,106 @@ class XiaohongshuExtractor:
 
     def _extract_video_url(self, note: dict[str, Any]) -> str | None:
         """提取视频URL"""
+        selected_stream = self._select_video_stream(self._extract_video_streams(note))
+        return selected_stream.url if selected_stream else None
+
+    def _extract_video_streams(
+        self, note: dict[str, Any]
+    ) -> list[XiaohongshuVideoStream]:
+        """提取视频所有可用清晰度，供上限选择和下载大小展示使用。"""
         if note.get("type") != "video":
-            return None
+            return []
 
         video = note.get("video")
         if not isinstance(video, dict):
-            return None
+            return []
 
         media = video.get("media")
         if not isinstance(media, dict):
-            return None
+            return []
 
         stream = media.get("stream")
         if not isinstance(stream, dict):
+            return []
+
+        streams: list[XiaohongshuVideoStream] = []
+        seen_urls: set[str] = set()
+        codec_items = list(stream.items())
+        known_codec_order = {"h265": 0, "h264": 1, "av1": 2, "h266": 3}
+        codec_items.sort(key=lambda item: known_codec_order.get(str(item[0]).lower(), 99))
+        for codec, codec_streams in codec_items:
+            if not isinstance(codec_streams, list):
+                continue
+            for item in codec_streams:
+                if not isinstance(item, dict):
+                    continue
+                master_url = item.get("masterUrl")
+                if not master_url or master_url in seen_urls:
+                    continue
+                seen_urls.add(master_url)
+                try:
+                    width = int(item.get("width") or 0)
+                except (TypeError, ValueError):
+                    width = 0
+                try:
+                    height = int(item.get("height") or 0)
+                except (TypeError, ValueError):
+                    height = 0
+                try:
+                    size = int(item.get("size")) if item.get("size") else None
+                except (TypeError, ValueError):
+                    size = None
+                streams.append(
+                    XiaohongshuVideoStream(
+                        url=str(master_url),
+                        width=width,
+                        height=height,
+                        size=size,
+                        codec=str(item.get("videoCodec") or codec),
+                        quality=str(
+                            item.get("qualityType") or item.get("streamDesc") or ""
+                        ),
+                    )
+                )
+
+        return streams
+
+    def _select_video_stream(
+        self, streams: list[XiaohongshuVideoStream]
+    ) -> XiaohongshuVideoStream | None:
+        if not streams:
             return None
 
-        # h265 无水印优先，其次 h264
-        for codec in ("h265", "h264", "av1", "h266"):
-            codec_streams = stream.get(codec)
-            if isinstance(codec_streams, list) and codec_streams:
-                master_url = codec_streams[0].get("masterUrl")
-                if master_url:
-                    logger.debug("XHS video codec: %s", codec)
-                    return master_url
+        limit = XHS_VIDEO_QUALITY_LIMITS.get(self.max_video_quality, 720)
+        known = [stream for stream in streams if stream.nominal_resolution > 0]
+        if not known:
+            return streams[0]
 
-        return None
+        candidates = [stream for stream in known if stream.nominal_resolution <= limit]
+        if not candidates:
+            candidates = [min(known, key=lambda stream: stream.nominal_resolution)]
+            logger.warning(
+                "XHS 没有不超过%s的视频流，回退到最低可用清晰度: %s",
+                self.max_video_quality,
+                candidates[0].nominal_resolution,
+            )
+
+        codec_priority = {"h265": 4, "h264": 3, "av1": 2, "h266": 1}
+        selected = max(
+            candidates,
+            key=lambda stream: (
+                stream.nominal_resolution,
+                codec_priority.get(stream.codec.lower(), 0),
+            ),
+        )
+        logger.debug(
+            "XHS selected video stream: quality_limit=%s, resolution=%s, codec=%s, size=%s",
+            self.max_video_quality,
+            selected.nominal_resolution or "unknown",
+            selected.codec or "unknown",
+            selected.size or "unknown",
+        )
+        return selected
 
 
 # 导出
@@ -543,9 +659,11 @@ __all__ = [
     "XHS_MESSAGE_PATTERN",
     "XHS_REQUEST_TIMEOUT_SEC",
     "XHS_SHORT_LINK_PATTERN",
+    "XHS_VIDEO_QUALITY_OPTIONS",
     "XiaohongshuExtractor",
     "XiaohongshuParseError",
     "XiaohongshuRetryableError",
     "XiaohongshuResult",
+    "XiaohongshuVideoStream",
     "extract_xhs_links",
 ]

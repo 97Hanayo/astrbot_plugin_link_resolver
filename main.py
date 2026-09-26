@@ -49,6 +49,7 @@ from .core.xiaohongshu import (
     COMMENT_MODE_WEB,
     XHS_COMMENT_MODES,
     XHS_MESSAGE_PATTERN,
+    XHS_VIDEO_QUALITY_OPTIONS,
     XiaohongshuCardRenderer,
     XiaohongshuCommentScreenshotter,
     XiaohongshuExtractor,
@@ -497,6 +498,12 @@ class LinkResolverPlugin(
         self.xhs_merge_send = bool(
             self._get_config_value("xhs_settings.merge_send", False)
         )
+        _xhs_quality = str(
+            self._get_config_value("xhs_settings.max_video_quality", "720P")
+        ).strip().upper()
+        self.xhs_max_video_quality = (
+            _xhs_quality if _xhs_quality in XHS_VIDEO_QUALITY_OPTIONS else "720P"
+        )
         self.xhs_summary_mode = self._read_summary_mode("xhs_settings.summary_mode")
         self.xhs_render_card = self.xhs_summary_mode == SUMMARY_MODE_CARD
         self.xhs_download_original = bool(
@@ -576,6 +583,8 @@ class LinkResolverPlugin(
                     self.xhs_auto_refresh_cookies,
                     self.xhs_cookie_refresh_interval_hours,
                 )
+            if hasattr(xhs_extractor, "set_max_video_quality"):
+                xhs_extractor.set_max_video_quality(self.xhs_max_video_quality)
             if hasattr(xhs_extractor, "set_cookie"):
                 xhs_extractor.set_cookie(self.xhs_cookies)
 
@@ -653,7 +662,7 @@ class LinkResolverPlugin(
             else "关闭"
         )
         logger.info(
-            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,摘要=%s,时长<=%s), 抖音(合并=%s,摘要=%s,Cookie=%s), 小红书(原图=%s,摘要=%s,大图转文件=%s,评论截图=%s/%s/%d条,Cookie=%s), 微博(原图=%s,合并=%s,Cookie=%s,续期=%s/%dh), X(合并=%s,最多=%d), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
+            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,摘要=%s,时长<=%s), 抖音(合并=%s,摘要=%s,Cookie=%s), 小红书(上限=%s,原图=%s,摘要=%s,大图转文件=%s,评论截图=%s/%s/%d条,Cookie=%s), 微博(原图=%s,合并=%s,Cookie=%s,续期=%s/%dh), X(合并=%s,最多=%d), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
             "/".join(enabled_list) if enabled_list else "无",
             self.video_quality.name,
             "开" if self.bili_merge_send else "关",
@@ -662,6 +671,7 @@ class LinkResolverPlugin(
             "开" if self.douyin_merge_send else "关",
             "卡片" if self.douyin_render_card else "文字",
             "开" if self.douyin_cookie_enabled else "关",
+            self.xhs_max_video_quality,
             "开" if self.xhs_download_original else "关",
             "卡片" if self.xhs_render_card else "文字",
             xhs_image_limit_label,

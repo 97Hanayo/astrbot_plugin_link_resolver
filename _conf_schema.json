@@ -299,6 +299,20 @@
                 "hint": "仅对视频笔记生效。开启时发送摘要+视频的合并转发；关闭时只发送单独视频。图文笔记始终使用合并转发。",
                 "default": false
             },
+            "max_video_quality": {
+                "description": "小红书最大视频清晰度",
+                "type": "string",
+                "hint": "视频笔记只会选择不高于此上限的可用清晰度；默认720P。若笔记没有低于上限的流，则回退到最低可用流。",
+                "default": "720P",
+                "options": [
+                    "360P",
+                    "480P",
+                    "720P",
+                    "1080P",
+                    "2K",
+                    "4K"
+                ]
+            },
             "summary_mode": {
                 "description": "小红书摘要模式",
                 "type": "string",

@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import aiohttp
+import httpx
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -27,7 +28,7 @@ from . import (
     XiaohongshuRetryableError,
     extract_xhs_links,
 )
-from .extractor import _XHS_DOWNLOAD_UA
+from .extractor import _XHS_DOWNLOAD_UA, XiaohongshuExtractor
 
 # endregion
 
@@ -36,6 +37,9 @@ XHS_PARSE_TIMEOUT_SEC = 30.0
 XHS_PARSE_RETRY_BASE_DELAY_SEC = 1.0
 XHS_PARSE_RETRY_MAX_DELAY_SEC = 8.0
 XHS_ORIGINAL_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+XHS_VIDEO_DOWNLOAD_CHUNK_BYTES = 4 * 1024 * 1024
+XHS_VIDEO_DOWNLOAD_WORKERS = 8
+XHS_VIDEO_RANGE_RETRIES = 3
 # endregion
 
 
@@ -102,7 +106,7 @@ class XiaohongshuMixin:
         if referer:
             headers["Referer"] = referer
         headers["Origin"] = "https://www.xiaohongshu.com"
-        headers["Accept"] = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
+        headers["Accept"] = "*/*"
         headers["Accept-Language"] = "zh-CN,zh;q=0.9"
         return headers
 
@@ -128,14 +132,26 @@ class XiaohongshuMixin:
         return any(p in text for p in retryable_patterns)
 
     async def _download_xhs_video(
-        self, url: str, request_id: str, referer: str | None = None
+        self,
+        url: str,
+        request_id: str,
+        referer: str | None = None,
+        expected_size: int | None = None,
     ) -> Path:
+        url = self._force_https(url)
+        cookies = XiaohongshuExtractor._parse_cookie_header(
+            getattr(self, "xhs_cookies", "")
+        )
         max_bytes = (
             self.max_video_size_mb * 1024 * 1024 if self.max_video_size_mb > 0 else None
         )
-        size_mb = await self._estimate_total_size_mb(
-            url, None, headers=self._xhs_download_headers(referer)
-        )
+        if expected_size is None:
+            expected_size = await self._probe_stream_size(
+                url,
+                cookies=cookies,
+                headers=self._xhs_download_headers(referer),
+            )
+        size_mb = expected_size / 1024 / 1024 if expected_size else None
         logger.debug(
             "📹 估算小红书视频大小: %s MB",
             f"{size_mb:.2f}" if size_mb is not None else "未知",
@@ -143,15 +159,196 @@ class XiaohongshuMixin:
         if size_mb is not None and max_bytes and size_mb * 1024 * 1024 > max_bytes:
             raise SizeLimitExceeded("超过大小限制")
         output_path = self._build_xhs_path(url, is_video=True, request_id=request_id)
-        await self._download_stream(
+        await self._download_xhs_video_parallel(
             url,
             output_path,
-            cookies=None,
+            cookies=cookies,
             max_bytes=max_bytes,
             headers=self._xhs_download_headers(referer),
-            retries=3,
+            expected_size=expected_size,
         )
         return output_path
+
+    async def _download_xhs_video_parallel(
+        self,
+        url: str,
+        output_path: Path,
+        cookies: dict[str, str],
+        max_bytes: int | None,
+        headers: dict[str, str],
+        expected_size: int | None,
+        workers: int = XHS_VIDEO_DOWNLOAD_WORKERS,
+    ) -> int:
+        """使用 HTTP Range 分段并发下载，服务器不支持时回退单连接。"""
+        temp_path = output_path.with_suffix(output_path.suffix + ".part")
+        chunk_size = XHS_VIDEO_DOWNLOAD_CHUNK_BYTES
+        first_data: bytes | None = None
+        total_size = expected_size
+
+        try:
+            timeout = httpx.Timeout(300.0, connect=30.0)
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                headers=headers,
+                cookies=cookies or None,
+            ) as client:
+                first_end = min(
+                    (total_size or chunk_size) - 1,
+                    chunk_size - 1,
+                )
+                first_headers = {**headers, "Range": f"bytes=0-{first_end}"}
+                async with client.stream(
+                    "GET", url, headers=first_headers, follow_redirects=True
+                ) as response:
+                    if response.status_code == 200:
+                        response.raise_for_status()
+                        bytes_written = 0
+                        with open(temp_path, "wb") as file:
+                            async for chunk in response.aiter_bytes(1024 * 1024):
+                                if not chunk:
+                                    continue
+                                bytes_written += len(chunk)
+                                if max_bytes and bytes_written > max_bytes:
+                                    raise SizeLimitExceeded("超过大小限制")
+                                await asyncio.to_thread(file.write, chunk)
+                        await asyncio.to_thread(temp_path.replace, output_path)
+                        logger.debug(
+                            "📥 XHS 视频服务器不支持 Range，已回退单连接下载: %.2fMB",
+                            bytes_written / 1024 / 1024,
+                        )
+                        return bytes_written
+
+                    if response.status_code != 206:
+                        response.raise_for_status()
+                        raise RuntimeError(
+                            f"视频 Range 请求失败: HTTP {response.status_code}"
+                        )
+
+                    content_range = response.headers.get("Content-Range", "")
+                    match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+|\*)", content_range)
+                    if not match:
+                        logger.debug("XHS 视频响应缺少有效 Content-Range，回退单连接下载")
+                        return await self._download_stream(
+                            url,
+                            output_path,
+                            cookies=cookies,
+                            max_bytes=max_bytes,
+                            headers=headers,
+                            retries=3,
+                        )
+                    range_start, range_end, range_total = match.groups()
+                    if int(range_start) != 0:
+                        raise RuntimeError(f"视频 Range 起点异常: {content_range}")
+                    if range_total != "*":
+                        total_size = int(range_total)
+                    first_data = await response.aread()
+                    expected_first = int(range_end) - int(range_start) + 1
+                    if len(first_data) != expected_first:
+                        raise RuntimeError(
+                            "视频首段长度异常: "
+                            f"expected={expected_first}, actual={len(first_data)}"
+                        )
+
+                if not total_size:
+                    raise RuntimeError("无法确定视频总大小，不能执行分段下载")
+                if max_bytes and total_size > max_bytes:
+                    raise SizeLimitExceeded("超过大小限制")
+
+                ranges = [
+                    (start, min(start + chunk_size - 1, total_size - 1))
+                    for start in range(chunk_size, total_size, chunk_size)
+                ]
+                parts: list[bytes | None] = [first_data]
+                parts.extend([None] * len(ranges))
+                semaphore = asyncio.Semaphore(max(1, min(workers, len(ranges) + 1)))
+
+                async def fetch_range(index: int, start: int, end: int) -> None:
+                    async with semaphore:
+                        last_error: Exception | None = None
+                        for attempt in range(XHS_VIDEO_RANGE_RETRIES):
+                            try:
+                                range_headers = {
+                                    **headers,
+                                    "Range": f"bytes={start}-{end}",
+                                }
+                                response = await client.get(
+                                    url, headers=range_headers, follow_redirects=True
+                                )
+                                if response.status_code != 206:
+                                    response.raise_for_status()
+                                    raise RuntimeError(
+                                        f"视频分段请求失败: HTTP {response.status_code}"
+                                    )
+                                content_range = response.headers.get("Content-Range", "")
+                                match = re.fullmatch(
+                                    r"bytes (\d+)-(\d+)/(\d+|\*)", content_range
+                                )
+                                if match and (
+                                    int(match.group(1)) != start
+                                    or int(match.group(2)) != end
+                                ):
+                                    raise RuntimeError(
+                                        f"视频分段范围异常: {content_range}"
+                                    )
+                                data = response.content
+                                if len(data) != end - start + 1:
+                                    raise RuntimeError(
+                                        "视频分段长度异常: "
+                                        f"expected={end - start + 1}, actual={len(data)}"
+                                    )
+                                parts[index] = data
+                                return
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as exc:
+                                last_error = exc
+                                if attempt < XHS_VIDEO_RANGE_RETRIES - 1:
+                                    await asyncio.sleep(2**attempt)
+                        raise RuntimeError(
+                            f"视频分段下载失败 [{start}-{end}]: {last_error}"
+                        ) from last_error
+
+                await asyncio.gather(
+                    *[
+                        fetch_range(index + 1, start, end)
+                        for index, (start, end) in enumerate(ranges)
+                    ]
+                )
+
+            bytes_written = 0
+            with open(temp_path, "wb") as file:
+                for part in parts:
+                    if part is None:
+                        raise RuntimeError("视频分段结果不完整")
+                    bytes_written += len(part)
+                    if max_bytes and bytes_written > max_bytes:
+                        raise SizeLimitExceeded("超过大小限制")
+                    file.write(part)
+            if bytes_written != total_size:
+                raise RuntimeError(
+                    f"视频合并大小异常: expected={total_size}, actual={bytes_written}"
+                )
+            await asyncio.to_thread(temp_path.replace, output_path)
+            logger.info(
+                "📥 XHS 视频分段并发下载完成: size=%.2fMB, segments=%d, workers=%d, cookie=%s",
+                bytes_written / 1024 / 1024,
+                len(parts),
+                max(1, min(workers, len(parts))),
+                "on" if cookies else "off",
+            )
+            return bytes_written
+        except asyncio.CancelledError:
+            if temp_path.exists():
+                await asyncio.to_thread(temp_path.unlink, missing_ok=True)
+            raise
+        except SizeLimitExceeded:
+            if temp_path.exists():
+                await asyncio.to_thread(temp_path.unlink, missing_ok=True)
+            raise
+        except Exception:
+            if temp_path.exists():
+                await asyncio.to_thread(temp_path.unlink, missing_ok=True)
+            raise
 
     async def _download_xhs_image(
         self,
@@ -788,8 +985,19 @@ class XiaohongshuMixin:
         # 视频笔记：优先下载视频
         if result.video_url:
             try:
+                selected_stream = next(
+                    (
+                        stream
+                        for stream in getattr(result, "video_streams", [])
+                        if stream.url == result.video_url
+                    ),
+                    None,
+                )
                 video_path = await self._download_xhs_video(
-                    result.video_url, request_id, referer=result.source_url
+                    result.video_url,
+                    request_id,
+                    referer=result.source_url,
+                    expected_size=getattr(selected_stream, "size", None),
                 )
                 media_paths.append(video_path)
                 media_components.append(Video.fromFileSystem(str(video_path.resolve())))
@@ -797,7 +1005,15 @@ class XiaohongshuMixin:
                 cover_url = result.cover_url or (
                     result.image_urls[0] if result.image_urls else None
                 )
-                if cover_url:
+                need_cover = bool(
+                    cover_url
+                    and getattr(self, "xhs_render_card", False)
+                    and (
+                        getattr(self, "xhs_merge_send", False)
+                        or getattr(self, "xhs_enable_comment_screenshot", False)
+                    )
+                )
+                if need_cover:
                     try:
                         cover_path = await self._download_xhs_image(
                             cover_url, request_id, referer=result.source_url
