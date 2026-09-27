@@ -27,6 +27,8 @@ import httpx
 
 from astrbot.api import logger
 
+from ..common.playwright_cookies import collect_browser_cookies
+
 WEIBO_REQUEST_TIMEOUT_SEC = 20.0
 WEIBO_VISITOR_URL = "https://passport.weibo.com/visitor/genvisitor2"
 WEIBO_VISITOR_FORM = {
@@ -34,7 +36,8 @@ WEIBO_VISITOR_FORM = {
     "tid": "",
     "from": "weibo",
 }
-WEIBO_COOKIE_REFRESH_URL = "https://weibo.com/"
+WEIBO_BROWSER_REFRESH_URLS = ("https://weibo.com/", "https://m.weibo.cn/")
+WEIBO_LOGIN_COOKIE_NAMES = ("SUB", "SUBP", "WBPSESS")
 WEIBO_COOKIE_REFRESH_INTERVAL_SEC = 12 * 60 * 60
 WEIBO_BASE_HEADERS = {
     "User-Agent": (
@@ -284,7 +287,7 @@ class WeiboExtractor:
         return cookies
 
     async def _refresh_user_cookies(self, cookies: dict[str, str]) -> None:
-        """Best-effort session warm-up; only server-issued cookies are saved."""
+        """Refresh the user session through Chromium's effective Cookie jar."""
         if not self._auto_refresh_cookies or not self._user_cookies:
             return
 
@@ -294,21 +297,21 @@ class WeiboExtractor:
         self._last_cookie_refresh_at = now
 
         try:
-            async with httpx.AsyncClient(
-                timeout=self.timeout,
-                headers=WEIBO_API_HEADERS,
+            browser_cookies = await collect_browser_cookies(
                 cookies=cookies,
-                follow_redirects=True,
-            ) as client:
-                response = await client.get(WEIBO_COOKIE_REFRESH_URL)
-            self._capture_cookie_updates(response)
+                refresh_urls=WEIBO_BROWSER_REFRESH_URLS,
+                allowed_domains=("weibo.com", "weibo.cn"),
+                user_agent=WEIBO_BASE_HEADERS["User-Agent"],
+                timeout_ms=int(self.timeout * 1000),
+            )
+            self._capture_browser_cookie_updates(browser_cookies)
             logger.debug(
-                "🐦 微博登录 Cookie 保活请求完成: status=%s",
-                response.status_code,
+                "🐦 微博 Playwright Cookie 保活完成: browser_cookies=%s",
+                len(browser_cookies),
             )
         except asyncio.CancelledError:
             raise
-        except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+        except Exception as exc:
             logger.debug("微博登录 Cookie 保活请求失败（不影响当前解析）: %s", exc)
 
     async def _fetch_status_json(
@@ -586,6 +589,58 @@ class WeiboExtractor:
                     continue
                 updates[key] = None if max_age in {"0", "-1"} else value
         return updates
+
+    def _capture_browser_cookie_updates(
+        self, browser_cookies: list[dict[str, Any]]
+    ) -> None:
+        if not self._user_cookies:
+            return
+
+        updates: dict[str, str] = {}
+        update_priorities: dict[str, int] = {}
+        for cookie in browser_cookies:
+            domain = str(cookie.get("domain") or "").lower().lstrip(".")
+            if domain == "passport.weibo.com" or domain == "passport.weibo.cn":
+                continue
+            if domain in {"weibo.com", "www.weibo.com"} or domain.endswith(
+                ".weibo.com"
+            ):
+                priority = 0
+            elif domain in {"weibo.cn", "m.weibo.cn"} or domain.endswith(
+                ".weibo.cn"
+            ):
+                priority = 1
+            else:
+                continue
+            key = str(cookie.get("name") or "").strip()
+            value = str(cookie.get("value") or "").strip()
+            if self._is_safe_cookie_pair(key, value) and (
+                key not in update_priorities or priority < update_priorities[key]
+            ):
+                updates[key] = value
+                update_priorities[key] = priority
+        if not updates:
+            return
+
+        if any(
+            self._user_cookies.get(key) and not updates.get(key)
+            for key in WEIBO_LOGIN_COOKIE_NAMES
+        ):
+            logger.warning(
+                "🐦 微博 Playwright 刷新未保留关键登录 Cookie，忽略本次 Cookie 覆盖"
+            )
+            return
+
+        changed = False
+        for key, value in updates.items():
+            if self._user_cookies.get(key) != value:
+                self._user_cookies[key] = value
+                changed = True
+        if not changed:
+            return
+
+        self.cookie = self._serialize_cookie_header(self._user_cookies)
+        self._persist_user_cookies()
 
     def _capture_cookie_updates(self, response: httpx.Response) -> None:
         if not self._user_cookies:

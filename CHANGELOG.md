@@ -7,6 +7,7 @@
 - B站、抖音、小红书、X 和 NGA 链接新增登录 Cookie 自动刷新与持久化；按平台刷新间隔捕获服务端真实 Cookie 更新并原子写回。
 - 微博登录 Cookie 支持定期请求微博首页保活，并捕获微博接口真实返回的 `Set-Cookie` 更新。
 - 服务端更新后的微博 Cookie 会原子写回 `cookies/weibo_cookies.txt`，插件重载时优先使用该持久化值。
+- 微博和小红书 Cookie 保活改用 Playwright 浏览器 Cookie 状态，兼容 HTTP `Set-Cookie` 与页面脚本写入的 Cookie，并避免关键登录 Cookie 被空值覆盖。
 
 ## v1.1.13
 

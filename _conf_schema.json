@@ -182,7 +182,7 @@
             "auto_refresh_cookies": {
                 "description": "自动续期微博Cookies",
                 "type": "bool",
-                "hint": "开启后定期请求微博首页，并保存微博服务端真实下发的 Set-Cookie；不会伪造或延长 Cookie 有效期。",
+                "hint": "开启后定期用 Playwright 加载微博桌面端和移动端页面，保存浏览器最终 Cookie 状态；不会伪造或延长 Cookie 有效期，也不会用访客 Cookie 覆盖登录 Cookie。",
                 "default": true
             },
             "cookie_refresh_interval_hours": {
@@ -382,7 +382,7 @@
             "auto_refresh_cookies": {
                 "description": "自动续期小红书Cookies",
                 "type": "bool",
-                "hint": "开启后解析链接时定期访问小红书并保存服务端真实下发的 Set-Cookie；不会伪造或延长 Cookie 有效期。",
+                "hint": "开启后解析链接时定期用 Playwright 加载小红书主页并保存浏览器最终 Cookie 状态；不会伪造或延长 Cookie 有效期。",
                 "default": true
             },
             "cookie_refresh_interval_hours": {

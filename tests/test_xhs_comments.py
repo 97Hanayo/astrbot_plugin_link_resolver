@@ -25,6 +25,7 @@ from data.plugins.astrbot_plugin_link_resolver.core.common.font_manager import (
     ManagedFontPaths,
 )
 from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu import (
+    XiaohongshuExtractor,
     XiaohongshuResult,
 )
 from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu.comments import (
@@ -66,6 +67,58 @@ class TestXhsCommentCookies(unittest.TestCase):
         self.assertEqual(cookies[0]["expires"], 1893456000)
         self.assertTrue(cookies[0]["secure"])
         self.assertFalse(cookies[1]["secure"])
+
+    def test_browser_cookie_updates_are_persisted(self):
+        extractor = XiaohongshuExtractor()
+        extractor.set_cookie("a1=old-a1; web_session=old-session")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cookie_path = Path(tmpdir) / "cookies" / "xhs_cookies.txt"
+            updates: list[str] = []
+            extractor.set_cookie_storage(cookie_path, updates.append)
+
+            extractor._capture_browser_cookie_updates(
+                [
+                    {"name": "a1", "value": "new-a1", "domain": ".xiaohongshu.com"},
+                    {
+                        "name": "web_session",
+                        "value": "new-session",
+                        "domain": ".xiaohongshu.com",
+                    },
+                    {
+                        "name": "acw_tc",
+                        "value": "risk-cookie",
+                        "domain": ".xiaohongshu.com",
+                    },
+                ]
+            )
+
+            self.assertEqual(
+                extractor.get_cookies(),
+                {
+                    "a1": "new-a1",
+                    "web_session": "new-session",
+                    "acw_tc": "risk-cookie",
+                },
+            )
+            self.assertEqual(
+                cookie_path.read_text("utf-8"),
+                "a1=new-a1; web_session=new-session; acw_tc=risk-cookie\n",
+            )
+            self.assertEqual(updates, [extractor.cookie])
+
+    def test_browser_cookie_updates_do_not_clear_missing_login_cookie(self):
+        extractor = XiaohongshuExtractor()
+        extractor.set_cookie("a1=old-a1; web_session=old-session")
+
+        extractor._capture_browser_cookie_updates(
+            [{"name": "acw_tc", "value": "risk-cookie", "domain": ".xiaohongshu.com"}]
+        )
+
+        self.assertEqual(
+            extractor.get_cookies(),
+            {"a1": "old-a1", "web_session": "old-session"},
+        )
 
 
 class TestXhsOriginalImageCompression(unittest.TestCase):

@@ -114,7 +114,7 @@ ffmpeg -version
 | `weibo_settings.max_media` | 图文微博最多发送图片数 | 99 |
 | `weibo_settings.merge_send` | 视频微博使用合并转发 | ❌ 关闭 |
 | `weibo_settings.download_original` | 原图优先下载并自动回退 | ✅ 开启 |
-| `weibo_settings.auto_refresh_cookies` | 定期请求微博并保存服务端真实续期 Cookie | ✅ 开启 |
+| `weibo_settings.auto_refresh_cookies` | 定期用 Playwright 刷新微博浏览器 Cookie | ✅ 开启 |
 | `weibo_settings.cookie_refresh_interval_hours` | Cookie 保活请求最短间隔（小时） | 12 |
 | `weibo_settings.cookies` | 微博 Cookie 文本，留空时读取文件 | 空 |
 
@@ -134,7 +134,7 @@ ffmpeg -version
 | `xhs_settings.enable_comment_screenshot` | 开启评论截图，插入在摘要后、媒体前 | ❌ 关闭 |
 | `xhs_settings.comment_screenshot_max` | 最多截图评论条数，`0` 表示不限制 | 20 |
 | `xhs_settings.comment_screenshot_mode` | `网页截图` 或 `自绘评论图` | `网页截图` |
-| `xhs_settings.auto_refresh_cookies` | 定期访问小红书并保存服务端续期 Cookie | ✅ 开启 |
+| `xhs_settings.auto_refresh_cookies` | 定期用 Playwright 刷新小红书浏览器 Cookie | ✅ 开启 |
 | `xhs_settings.cookie_refresh_interval_hours` | Cookie 保活请求最短间隔（小时） | 12 |
 | `xhs_settings.cookies` | 小红书 Cookies 文本，留空时读取文件 | 空 |
 
@@ -248,7 +248,7 @@ data/plugin_data/astrbot_plugin_link_resolver/
 SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 ```
 - `weibo_settings.cookies` 支持 `weibo.com` / `weibo.cn` 导出的 `cookies.txt` 内容，也兼容 `a=1; b=2` 形式的 Cookie 字符串。配置保存后会写入 `cookies/weibo_cookies.txt`；配置留空时会自动读取该文件。
-- 开启 `weibo_settings.auto_refresh_cookies` 后，插件会定期请求微博首页，并捕获微博接口真实返回的 `Set-Cookie` 更新，原子写回 `cookies/weibo_cookies.txt`；不会伪造 Cookie 有效期。若微博已经注销或不再下发续期 Cookie，仍需要重新导出登录 Cookie。
+- 开启 `weibo_settings.auto_refresh_cookies` 后，插件会定期用 Playwright 加载微博桌面端和移动端页面，读取浏览器最终 Cookie 状态并原子写回 `cookies/weibo_cookies.txt`；不会伪造 Cookie 有效期，也不会用访客 Cookie 覆盖登录 Cookie。若微博已经注销或不再下发续期 Cookie，仍需要重新导出登录 Cookie。
 - 微博分享链路风控较重，公开微博也可能出现临时访客校验。
 
 ### 抖音 Cookie（可选）
@@ -257,7 +257,7 @@ SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 
 ### B站、抖音、小红书 Cookie 自动续期
 
-B站、抖音和小红书在解析链接时会按对应刷新间隔访问本站点，捕获服务端真实返回的 `Set-Cookie`，并原子写回各自的 Cookie 文件。插件重载时优先使用已持久化的文件内容；不会伪造或延长 Cookie 有效期，若账号注销或服务端不再续期，仍需重新导出 Cookie。
+B站和抖音在解析链接时会按对应刷新间隔访问本站点，捕获服务端真实返回的 `Set-Cookie`，并原子写回各自的 Cookie 文件。小红书会按刷新间隔使用 Playwright 加载主页，读取浏览器最终 Cookie 状态并原子写回 Cookie 文件。插件重载时优先使用已持久化的文件内容；不会伪造或延长 Cookie 有效期，若账号注销或服务端不再续期，仍需重新导出 Cookie。
 
 ### X Cookie（可选）
 

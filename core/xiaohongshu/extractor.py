@@ -17,11 +17,14 @@ from ..common import (
     parse_set_cookie_updates,
     serialize_cookie_header,
 )
+from ..common.playwright_cookies import collect_browser_cookies
 
 
 # region 常量
 XHS_REQUEST_TIMEOUT_SEC = 30.0
 XHS_COOKIE_DOMAINS = ("xiaohongshu.com",)
+XHS_BROWSER_REFRESH_URL = "https://www.xiaohongshu.com/"
+XHS_LOGIN_COOKIE_NAMES = ("web_session", "a1")
 XHS_VIDEO_QUALITY_OPTIONS = ("360P", "480P", "720P", "1080P", "2K", "4K")
 XHS_VIDEO_QUALITY_LIMITS = {
     "360P": 360,
@@ -241,13 +244,72 @@ class XiaohongshuExtractor:
             return
         self._last_cookie_refresh_at = now
         try:
-            async with aiohttp.ClientSession(timeout=self.timeout, cookies=self._cookies) as session:
-                async with session.get("https://www.xiaohongshu.com/", headers=_EXPLORE_HEADERS) as resp:
-                    self._capture_cookie_updates(resp)
+            timeout_seconds = getattr(self.timeout, "total", None)
+            if not isinstance(timeout_seconds, (int, float)):
+                timeout_seconds = XHS_REQUEST_TIMEOUT_SEC
+            browser_cookies = await collect_browser_cookies(
+                cookies=self._cookies,
+                refresh_urls=(XHS_BROWSER_REFRESH_URL,),
+                allowed_domains=XHS_COOKIE_DOMAINS,
+                user_agent=_XHS_DESKTOP_UA,
+                timeout_ms=int(timeout_seconds * 1000),
+            )
+            self._capture_browser_cookie_updates(browser_cookies)
+            logger.debug(
+                "🍠 小红书 Playwright Cookie 保活完成: browser_cookies=%s",
+                len(browser_cookies),
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.debug("小红书 Cookie 保活请求失败（不影响当前解析）: %s", exc)
+
+    def _capture_browser_cookie_updates(
+        self, browser_cookies: list[dict[str, Any]]
+    ) -> None:
+        if not self._auto_refresh_cookies or not self._cookies:
+            return
+
+        updates: dict[str, str] = {}
+        for cookie in browser_cookies:
+            name = str(cookie.get("name") or "").strip()
+            value = str(cookie.get("value") or "").strip()
+            if name and value and not any(
+                ord(char) < 32 or ord(char) == 127 for char in name + value
+            ):
+                updates[name] = value
+        if not updates:
+            return
+
+        if any(
+            self._cookies.get(name) and not updates.get(name)
+            for name in XHS_LOGIN_COOKIE_NAMES
+        ):
+            logger.warning(
+                "🍠 小红书 Playwright 刷新未保留关键登录 Cookie，忽略本次 Cookie 覆盖"
+            )
+            return
+
+        changed = False
+        for name, value in updates.items():
+            if self._cookies.get(name) != value:
+                self._cookies[name] = value
+                changed = True
+        if not changed:
+            return
+
+        self.cookie = serialize_cookie_header(self._cookies)
+        if self._cookie_storage_path is not None:
+            try:
+                atomic_write_cookie_text(self._cookie_storage_path, self.cookie)
+                logger.info("小红书浏览器更新的 Cookie 已持久化: %s", self._cookie_storage_path)
+            except Exception as exc:
+                logger.warning("持久化小红书浏览器 Cookie 失败: %s", exc)
+        if self._cookie_update_callback is not None:
+            try:
+                self._cookie_update_callback(self.cookie)
+            except Exception as exc:
+                logger.debug("同步小红书 Cookie 配置失败: %s", exc)
 
     def _capture_cookie_updates(self, response: aiohttp.ClientResponse) -> None:
         if not self._auto_refresh_cookies or not self._cookies:

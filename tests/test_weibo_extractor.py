@@ -152,6 +152,66 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
         extractor._capture_cookie_updates(response)
         self.assertEqual(extractor._user_cookies, {"SUBP": "old-subp"})
 
+    def test_browser_cookie_updates_are_persisted(self):
+        extractor = WeiboExtractor()
+        extractor.set_cookie("SUB=old-sub; SUBP=old-subp")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cookie_path = Path(tmpdir) / "cookies" / "weibo_cookies.txt"
+            updates: list[str] = []
+            extractor.set_cookie_storage(cookie_path, updates.append)
+
+            extractor._capture_browser_cookie_updates(
+                [
+                    {"name": "SUB", "value": "new-sub", "domain": ".weibo.com"},
+                    {"name": "SUBP", "value": "new-subp", "domain": ".weibo.cn"},
+                    {"name": "WBPSESS", "value": "session-1", "domain": ".weibo.com"},
+                ]
+            )
+
+            self.assertEqual(
+                extractor._user_cookies,
+                {
+                    "SUB": "new-sub",
+                    "SUBP": "new-subp",
+                    "WBPSESS": "session-1",
+                },
+            )
+            self.assertEqual(
+                cookie_path.read_text("utf-8"),
+                "SUB=new-sub; SUBP=new-subp; WBPSESS=session-1\n",
+            )
+            self.assertEqual(updates, [extractor.cookie])
+
+    def test_browser_cookie_updates_do_not_clear_missing_login_cookie(self):
+        extractor = WeiboExtractor()
+        extractor.set_cookie("SUB=old-sub; SUBP=old-subp")
+
+        extractor._capture_browser_cookie_updates(
+            [{"name": "visitor", "value": "visitor-value", "domain": ".weibo.com"}]
+        )
+
+        self.assertEqual(
+            extractor._user_cookies,
+            {"SUB": "old-sub", "SUBP": "old-subp"},
+        )
+
+    def test_browser_cookie_updates_ignore_visitor_domain(self):
+        extractor = WeiboExtractor()
+        extractor.set_cookie("SUB=user-sub; SUBP=user-subp")
+
+        extractor._capture_browser_cookie_updates(
+            [
+                {"name": "SUB", "value": "visitor-sub", "domain": "passport.weibo.com"},
+                {"name": "SUBP", "value": "visitor-subp", "domain": "passport.weibo.com"},
+            ]
+        )
+
+        self.assertEqual(
+            extractor._user_cookies,
+            {"SUB": "user-sub", "SUBP": "user-subp"},
+        )
+
     def test_extract_status_payload_accepts_wrapped_data_and_idstr(self):
         payload = {
             "ok": 1,
