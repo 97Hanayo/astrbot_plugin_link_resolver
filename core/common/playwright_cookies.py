@@ -18,7 +18,7 @@ async def collect_browser_cookies(
     cookies: Mapping[str, str],
     refresh_urls: Sequence[str],
     allowed_domains: Iterable[str],
-    user_agent: str,
+    user_agent: str | None,
     timeout_ms: int,
     viewport: Mapping[str, int] | None = None,
 ) -> list[dict[str, Any]]:
@@ -45,11 +45,13 @@ async def collect_browser_cookies(
             fallback_executable_paths=browser_channel_candidates(),
         )
         try:
-            context = await browser.new_context(
-                viewport=dict(viewport or {"width": 1280, "height": 900}),
-                user_agent=user_agent,
-                locale="zh-CN",
-            )
+            context_options = {
+                "viewport": dict(viewport or {"width": 1280, "height": 900}),
+                "locale": "zh-CN",
+            }
+            if user_agent:
+                context_options["user_agent"] = user_agent
+            context = await browser.new_context(**context_options)
             try:
                 seed_cookies = [
                     {

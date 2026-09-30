@@ -251,8 +251,11 @@ class XiaohongshuExtractor:
                 cookies=self._cookies,
                 refresh_urls=(XHS_BROWSER_REFRESH_URL,),
                 allowed_domains=XHS_COOKIE_DOMAINS,
-                user_agent=_XHS_DESKTOP_UA,
+                # Let Playwright use the launched browser's native UA so it
+                # stays consistent with the actual Chromium/Edge runtime.
+                user_agent=None,
                 timeout_ms=int(timeout_seconds * 1000),
+                viewport={"width": 1365, "height": 768},
             )
             self._capture_browser_cookie_updates(browser_cookies)
             logger.debug(
