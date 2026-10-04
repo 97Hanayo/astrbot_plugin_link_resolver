@@ -45,6 +45,7 @@ from .core.twitter import TWITTER_MESSAGE_PATTERN, TwitterExtractor
 from .core.twitter.handler import TwitterMixin
 from .core.weibo import WEIBO_MESSAGE_PATTERN, WeiboExtractor
 from .core.weibo.handler import WeiboMixin
+from .core.weibo.cookie_storage import load_cookie_source, record_refreshed_source
 from .core.xiaohongshu import (
     COMMENT_MODE_WEB,
     XHS_COMMENT_MODES,
@@ -351,41 +352,23 @@ class LinkResolverPlugin(
             self._get_config_value("weibo_settings.cookies", "")
         ).strip()
         weibo_cookies_file = get_weibo_cookies_file()
-        persisted_weibo_cookies = ""
-        if weibo_cookies_file.exists():
-            try:
-                persisted_weibo_cookies = weibo_cookies_file.read_text(
-                    encoding="utf-8"
-                ).strip()
-            except Exception as exc:
-                logger.warning("⚠️ 读取微博 Cookie 文件失败: %s", str(exc))
-
-        # 服务端续期后的 Cookie 以文件为准，避免插件重载时被管理面板中的旧值覆盖。
-        if (
-            weibo_cookies_str
-            and persisted_weibo_cookies
-            and WeiboExtractor._parse_cookie_header(persisted_weibo_cookies)
-        ):
-            weibo_cookies_str = persisted_weibo_cookies
-            logger.info("🍪 使用已持久化的微博 Cookie: %s", weibo_cookies_file)
-        elif weibo_cookies_str:
-            try:
-                weibo_cookies_file.parent.mkdir(parents=True, exist_ok=True)
-                if "\n" not in weibo_cookies_str and ".weibo.com" in weibo_cookies_str:
-                    weibo_cookies_str = re.sub(
-                        r"\s+(\.?(?:www\.|m\.)?weibo\.(?:com|cn)\s)",
-                        r"\n\1",
-                        weibo_cookies_str,
-                    )
-                    weibo_cookies_str = weibo_cookies_str.replace("# ", "\n# ").strip()
-                weibo_cookies_file.write_text(weibo_cookies_str, encoding="utf-8")
-                logger.info("🍪 微博 Cookie 已从配置写入文件")
-            except Exception as exc:
-                logger.warning("⚠️ 写入微博 Cookie 文件失败: %s", str(exc))
-        else:
-            weibo_cookies_str = persisted_weibo_cookies
-            if weibo_cookies_str:
-                logger.info("🍪 使用文件读取微博 Cookie: %s", weibo_cookies_file)
+        # Preserve automatic renewal for unchanged inputs, but let a new
+        # explicitly configured Cookie replace an older local file.
+        try:
+            if "\n" not in weibo_cookies_str and ".weibo.com" in weibo_cookies_str:
+                weibo_cookies_str = re.sub(
+                    r"\s+(\.?(?:www\.|m\.)?weibo\.(?:com|cn)\s)",
+                    r"\n\1", weibo_cookies_str,
+                )
+                weibo_cookies_str = weibo_cookies_str.replace("# ", "\n# ").strip()
+            configured_cookie = weibo_cookies_str
+            weibo_cookies_str = load_cookie_source(configured_cookie, weibo_cookies_file)
+            if configured_cookie and configured_cookie == weibo_cookies_str:
+                logger.debug("🍪 使用后台配置的微博 Cookie")
+            elif weibo_cookies_str:
+                logger.debug("🍪 使用已持久化的微博 Cookie")
+        except OSError as exc:
+            logger.warning("⚠️ 读写微博 Cookie 文件失败（%s），使用当前后台配置", type(exc).__name__)
         if hasattr(self.weibo_extractor, "set_cookie_storage"):
             self.weibo_extractor.set_cookie_storage(
                 weibo_cookies_file,
@@ -773,6 +756,10 @@ class LinkResolverPlugin(
 
     def _on_weibo_cookie_updated(self, cookie: str) -> None:
         """同步服务端续期后的 Cookie 到当前可变配置对象。"""
+        try:
+            record_refreshed_source(cookie, get_weibo_cookies_file())
+        except OSError as exc:
+            logger.warning("⚠️ 保存微博 Cookie 来源标记失败（%s）", type(exc).__name__)
         settings = (
             self.config.get("weibo_settings")
             if isinstance(self.config, dict)

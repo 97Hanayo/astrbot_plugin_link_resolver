@@ -298,6 +298,58 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(task.cancelled())
         self.assertIsNone(plugin._weibo_keepalive_task)
 
+    def test_new_configured_cookie_replaces_legacy_file(self):
+        from data.plugins.astrbot_plugin_link_resolver.core.weibo.cookie_storage import load_cookie_source
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "cookie.txt"
+            target.write_text("SUB=expired", encoding="utf-8")
+            self.assertEqual(load_cookie_source("SUB=fresh", target), "SUB=fresh")
+            self.assertEqual(target.read_text(encoding="utf-8").strip(), "SUB=fresh")
+
+    def test_renewal_survives_reload_with_unchanged_configuration(self):
+        from data.plugins.astrbot_plugin_link_resolver.core.weibo.cookie_storage import load_cookie_source, record_refreshed_source
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "cookie.txt"
+            load_cookie_source("SUB=original", target)
+            target.write_text("SUB=renewed", encoding="utf-8")
+            record_refreshed_source("SUB=renewed", target)
+            self.assertEqual(load_cookie_source("SUB=original", target), "SUB=renewed")
+            self.assertEqual(load_cookie_source("SUB=renewed", target), "SUB=renewed")
+            target.write_text("SUB=renewed-again", encoding="utf-8")
+            record_refreshed_source("SUB=renewed-again", target)
+            self.assertEqual(load_cookie_source("SUB=original", target), "SUB=renewed-again")
+
+    def test_manual_cookie_replacement_after_renewal_wins(self):
+        from data.plugins.astrbot_plugin_link_resolver.core.weibo.cookie_storage import load_cookie_source, record_refreshed_source
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "cookie.txt"
+            load_cookie_source("SUB=original", target)
+            target.write_text("SUB=renewed", encoding="utf-8")
+            record_refreshed_source("SUB=renewed", target)
+            self.assertEqual(load_cookie_source("SUB=manual", target), "SUB=manual")
+            target.write_text("SUB=manual-renewed", encoding="utf-8")
+            record_refreshed_source("SUB=manual-renewed", target)
+            self.assertEqual(load_cookie_source("SUB=manual", target), "SUB=manual-renewed")
+
+    def test_empty_configuration_reads_cookie_file(self):
+        from data.plugins.astrbot_plugin_link_resolver.core.weibo.cookie_storage import load_cookie_source
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "cookie.txt"
+            self.assertEqual(load_cookie_source("", target), "")
+            target.write_text("SUB=file", encoding="utf-8")
+            self.assertEqual(load_cookie_source("", target), "SUB=file")
+
+    def test_corrupt_source_marker_does_not_ignore_new_cookie(self):
+        from data.plugins.astrbot_plugin_link_resolver.core.weibo.cookie_storage import load_cookie_source
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "cookie.txt"
+            target.write_text("SUB=expired", encoding="utf-8")
+            target.with_name("cookie.txt.source.json").write_text("[]", encoding="utf-8")
+            self.assertEqual(load_cookie_source("SUB=fresh", target), "SUB=fresh")
+            marker = target.with_name("cookie.txt.source.json").read_text(encoding="utf-8")
+            self.assertNotIn("fresh", marker)
+            self.assertNotIn("expired", marker)
+
     def test_extract_status_payload_accepts_wrapped_data_and_idstr(self):
         payload = {
             "ok": 1,
