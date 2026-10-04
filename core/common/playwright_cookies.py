@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
-from .cookies import host_matches
+from .cookies import atomic_write_cookie_text, host_matches
 from .playwright_manager import (
     browser_channel_candidates,
     configure_playwright_browser_path,
@@ -22,6 +25,8 @@ async def collect_browser_cookies(
     timeout_ms: int,
     viewport: Mapping[str, int] | None = None,
     cookie_domain: str | None = None,
+    state_path: Path | None = None,
+    session_cookie_names: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Load cookies in Chromium and return the final same-site Cookie jar.
 
@@ -32,6 +37,22 @@ async def collect_browser_cookies(
     """
     if not cookies or not refresh_urls:
         return []
+
+    def fingerprint(values: Mapping[str, str]) -> str:
+        selected = {name: values.get(name, "") for name in session_cookie_names}
+        return hashlib.sha256(json.dumps(selected, sort_keys=True).encode()).hexdigest()
+
+    input_digest = fingerprint(cookies)
+    saved_state = None
+    if state_path is not None:
+        try:
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+            if input_digest in (saved.get("input_digest"), saved.get("output_digest")):
+                candidate_state = saved.get("storage_state")
+                if isinstance(candidate_state, dict):
+                    saved_state = candidate_state
+        except (OSError, ValueError, AttributeError):
+            pass
 
     try:
         from playwright.async_api import async_playwright
@@ -52,6 +73,8 @@ async def collect_browser_cookies(
             }
             if user_agent:
                 context_options["user_agent"] = user_agent
+            if saved_state is not None:
+                context_options["storage_state"] = saved_state
             context = await browser.new_context(**context_options)
             try:
                 seed_cookies = [
@@ -65,23 +88,27 @@ async def collect_browser_cookies(
                     for name, value in cookies.items()
                     if name and value
                 ]
-                if seed_cookies:
+                if seed_cookies and saved_state is None:
                     await context.add_cookies(seed_cookies)
 
+                loaded = False
                 for refresh_url in refresh_urls:
                     page = await context.new_page()
                     try:
                         try:
-                            await page.goto(
+                            response = await page.goto(
                                 refresh_url,
                                 wait_until="domcontentloaded",
                                 timeout=max(1000, int(timeout_ms)),
                             )
+                            if state_path is not None and response is not None and response.status >= 400:
+                                raise RuntimeError("Browser keepalive page failed")
                         except Exception:
                             # Continue with another first-party refresh URL if
                             # one site variant is blocked or times out.
                             pass
                         else:
+                            loaded = True
                             try:
                                 await page.wait_for_load_state(
                                     "networkidle",
@@ -94,12 +121,32 @@ async def collect_browser_cookies(
                     finally:
                         await page.close()
 
+                if state_path is not None and not loaded:
+                    raise RuntimeError("No browser keepalive page loaded")
                 allowed = tuple(allowed_domains)
-                return [
+                browser_cookies = [
                     cookie
                     for cookie in await context.cookies()
                     if host_matches(str(cookie.get("domain") or ""), allowed)
                 ]
+                if state_path is not None:
+                    effective = {
+                        item["name"]: item["value"]
+                        for item in await context.cookies(list(refresh_urls))
+                    }
+                    if any(
+                        cookies.get(name) and not effective.get(name)
+                        for name in session_cookie_names
+                    ):
+                        raise RuntimeError("Browser keepalive removed login cookies")
+                    # Preserve scoped cookies and local storage, including SSO
+                    # state from redirects. Never flatten that state into headers.
+                    atomic_write_cookie_text(state_path, json.dumps({
+                        "input_digest": input_digest,
+                        "output_digest": fingerprint(effective),
+                        "storage_state": await context.storage_state(),
+                    }))
+                return browser_cookies
             finally:
                 await context.close()
         finally:

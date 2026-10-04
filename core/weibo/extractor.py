@@ -37,7 +37,9 @@ WEIBO_VISITOR_FORM = {
 }
 WEIBO_BROWSER_REFRESH_URLS = ("https://weibo.com/",)
 # Same heartbeat endpoint used by the desktop site's official frontend.
-WEIBO_LOGIN_CHECK_URL = "https://weibo.com/ajax/config/get_config"
+WEIBO_COOKIE_REFRESH_URL = "https://weibo.com/ajax/config/get_config"
+WEIBO_RESTORE_URL = "https://passport.weibo.com/visitor/visitor"
+WEIBO_SSO_LOGIN_URL = "https://passport.weibo.com/sso/v2/login"
 WEIBO_LOGIN_COOKIE_NAMES = ("SUB", "SUBP", "WBPSESS")
 WEIBO_COOKIE_REFRESH_INTERVAL_SEC = 12 * 60 * 60
 WEIBO_BASE_HEADERS = {
@@ -318,8 +320,14 @@ class WeiboExtractor:
         try:
             original = dict(self._user_cookies)
             generation = self._cookie_generation
-            uid, seed = await self._validate_cookie_candidate(original)
             logger.info("🐦 微博桌面端 Cookie 保活开始")
+            seed = original
+            try:
+                restored = await self._restore_cookie_candidate(original)
+                if restored is not None:
+                    seed = restored
+            except Exception as exc:
+                logger.info("🐦 微博 SSO 恢复未完成，继续浏览器保活（%s）", type(exc).__name__)
             try:
                 browser_cookies = await collect_browser_cookies(
                     cookies=seed,
@@ -328,16 +336,21 @@ class WeiboExtractor:
                     cookie_domain=".weibo.com",
                     user_agent=WEIBO_BASE_HEADERS["User-Agent"],
                     timeout_ms=int(self.timeout * 1000),
+                    state_path=(self._cookie_storage_path.with_suffix(".browser.json")
+                                if self._cookie_storage_path else None),
+                    session_cookie_names=WEIBO_LOGIN_COOKIE_NAMES,
                 )
             except Exception as exc:
                 logger.info(
-                    "🐦 微博浏览器保活不可用，尝试 HTTP 验证续期（%s）",
+                    "🐦 微博浏览器保活不可用，尝试 HTTP 保活（%s）",
                     type(exc).__name__,
                 )
-                browser_cookies = []
-            candidate = self._browser_cookie_candidate(browser_cookies, seed)
-            _, verified = await self._validate_cookie_candidate(candidate, expected_uid=uid)
-            self._commit_cookie_candidate(original, verified, generation)
+                refreshed = seed if seed != original else await self._refresh_cookie_candidate(original)
+            else:
+                if not browser_cookies:
+                    raise WeiboAuthError("浏览器保活没有返回 Cookie，保留原值")
+                refreshed = self._browser_cookie_candidate(browser_cookies, seed)
+            self._commit_cookie_candidate(original, refreshed, generation)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -347,52 +360,99 @@ class WeiboExtractor:
                 exc if isinstance(exc, WeiboAuthError) else "请求或浏览器异常",
             )
 
-    async def _validate_cookie_candidate(
-        self, cookies: dict[str, str], expected_uid: str | None = None
-    ) -> tuple[str, dict[str, str]]:
-        candidate = dict(cookies)
-        identity = str(expected_uid) if expected_uid is not None else None
+    async def _refresh_cookie_candidate(
+        self, cookies: dict[str, str]
+    ) -> dict[str, str]:
+        """Capture server-issued renewal without requiring an account UID."""
         async with httpx.AsyncClient(
             timeout=self.timeout, headers=WEIBO_API_HEADERS, follow_redirects=False
         ) as client:
-            for _ in range(3):
-                response = await client.get(
-                    WEIBO_LOGIN_CHECK_URL,
-                    headers={"Cookie": self._serialize_cookie_header(candidate)},
-                )
-                if response.status_code != 200:
-                    if response.status_code == 404:
-                        raise WeiboAuthError(
-                            "桌面端登录验证接口返回 404，无法判断 Cookie 是否有效"
-                        )
-                    raise WeiboAuthError(f"登录验证状态码 {response.status_code}")
-                try:
-                    payload = response.json()
-                except ValueError as exc:
-                    raise WeiboAuthError("登录验证返回非 JSON") from exc
-                data = payload.get("data") if isinstance(payload, dict) else None
-                if (
-                    not isinstance(data, dict)
-                    or payload.get("ok") != 1
-                    or ("login" in data and data["login"] is not True)
+            response = await client.get(
+                WEIBO_COOKIE_REFRESH_URL,
+                headers={"Cookie": self._serialize_cookie_header(cookies)},
+            )
+        if response.status_code != 200:
+            if response.status_code == 404:
+                raise WeiboAuthError("桌面端保活接口返回 404，无法判断 Cookie 是否有效")
+            raise WeiboAuthError(f"保活接口状态码 {response.status_code}")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise WeiboAuthError("保活接口返回非 JSON") from exc
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict) or payload.get("ok") != 1:
+            raise WeiboAuthError("桌面端保活接口未返回成功结果")
+        if "login" in data and data["login"] is not True:
+            raise WeiboAuthError("桌面端保活接口明确返回未登录")
+        # UID is deliberately not required or compared. Persist actual browser
+        # and Set-Cookie updates; a successful request is not proof of login.
+        return self._merge_candidate(cookies, self._desktop_cookie_updates(response))
+
+    async def _restore_cookie_candidate(
+        self, cookies: dict[str, str]
+    ) -> dict[str, str] | None:
+        """Exchange an existing SRF recovery session for a fresh, dynamic ALT.
+
+        Mirrors visitor/visitor's restore_back flow, without generating guest
+        credentials or reusing a captured login URL. Only cookies applicable to
+        the desktop homepage are exported from the scoped redirect Cookie jar.
+        """
+        if not cookies.get("SRF"):
+            return None
+        jar = httpx.Cookies()
+        for name, value in cookies.items():
+            jar.set(name, value, domain=".weibo.com", path="/")
+        async with httpx.AsyncClient(
+            timeout=self.timeout, headers=WEIBO_BASE_HEADERS, cookies=jar,
+            follow_redirects=False,
+        ) as client:
+            response = await client.get(WEIBO_RESTORE_URL, params={
+                "a": "restore", "cb": "restore_back", "from": "weibo",
+                "_rand": str(time.time()),
+            })
+            if response.status_code != 200:
+                raise WeiboAuthError(f"SSO 恢复状态码 {response.status_code}")
+            match = re.search(
+                r"\brestore_back\(\s*(\{.*\})\s*\)\s*;?\s*$",
+                response.text, re.DOTALL,
+            )
+            if not match:
+                raise WeiboAuthError("SSO 恢复响应不是预期的 JSONP")
+            payload = json.loads(match.group(1))
+            if not isinstance(payload, dict):
+                raise WeiboAuthError("SSO 恢复响应结构异常")
+            data = payload.get("data")
+            if payload.get("retcode") != 20000000 or not isinstance(data, dict):
+                return None
+            alt = data.get("alt")
+            if not isinstance(alt, str) or not alt:
+                return None
+            response = await client.get(WEIBO_SSO_LOGIN_URL, params={
+                "entry": "sso", "source": "visitor_restore", "type": "3",
+                "alt": alt, "url": "https://weibo.com/",
+            })
+            for _ in range(10):
+                if response.status_code not in (301, 302, 303, 307, 308):
+                    break
+                location = response.headers.get("location")
+                if not location:
+                    break
+                target = response.url.join(location)
+                if target.scheme != "https" or not host_matches(
+                    target.host, ("weibo.com", "sina.com.cn")
                 ):
-                    raise WeiboAuthError("桌面端接口未确认登录")
-                # Desktop config identifies the logged-in account by UID;
-                # unlike m.weibo.cn/api/config it need not contain `login`.
-                uid = str(data.get("uid") or "")
-                if not uid.isascii() or not uid.isdecimal() or int(uid) <= 0:
-                    raise WeiboAuthError("桌面端登录配置缺少有效账号 UID")
-                if identity is not None and uid != identity:
-                    raise WeiboAuthError("登录验证的账号不一致")
-                identity = uid
-                updates = self._desktop_cookie_updates(response)
-                updated = self._merge_candidate(candidate, updates)
-                if all(updated.get(name) == candidate.get(name) for name in WEIBO_LOGIN_COOKIE_NAMES):
-                    # Auxiliary cookies can rotate indefinitely. Save only a header
-                    # that was sent and confirmed logged in.
-                    return identity, candidate
-                candidate = updated
-        raise WeiboAuthError("验证期间登录凭据持续变化，暂不保存")
+                    raise WeiboAuthError("SSO 恢复跳转目标不属于微博登录域名")
+                response = await client.get(target)
+            # Cookies from intermediate redirects matter even when the final
+            # page has no Set-Cookie, or denies automated homepage access.
+            header = client.build_request("GET", "https://weibo.com/").headers.get("Cookie", "")
+            candidate = self._parse_cookie_header(header)
+            if any(cookies.get(name) and not candidate.get(name) for name in WEIBO_LOGIN_COOKIE_NAMES):
+                raise WeiboAuthError("SSO 恢复响应删除了登录凭据")
+            if any(candidate.get(name) != cookies.get(name) for name in WEIBO_LOGIN_COOKIE_NAMES):
+                logger.info("🐦 微博 SRF → ALT → SSO 恢复收到新的登录 Cookie")
+                return candidate
+            return None
 
     @staticmethod
     def _merge_candidate(
@@ -419,14 +479,14 @@ class WeiboExtractor:
             if original.get(name) != candidate.get(name)
         )
         if not changed:
-            logger.info("🐦 微博 Cookie 登录验证通过，未收到可保存的新值；不能据此确认凭据续期")
+            logger.info("🐦 微博保活请求完成，未收到可保存的新值；不能据此确认凭据续期")
             return
         self._user_cookies = dict(candidate)
         self.cookie = self._serialize_cookie_header(candidate)
         self._cookie_generation += 1
         if self._persist_user_cookies():
             logger.info(
-                "🐦 微博已保存通过同账号登录验证的 Cookie，更新字段: %s",
+                "🐦 微博已保存服务端下发的 Cookie 更新，更新字段: %s",
                 ", ".join(changed),
             )
 
@@ -488,11 +548,10 @@ class WeiboExtractor:
                 candidate = self._merge_candidate(original, updates)
                 if candidate == original:
                     return
-                uid, _ = await self._validate_cookie_candidate(original)
-                _, verified = await self._validate_cookie_candidate(candidate, expected_uid=uid)
-                self._commit_cookie_candidate(original, verified, generation)
+                refreshed = await self._refresh_cookie_candidate(candidate)
+                self._commit_cookie_candidate(original, refreshed, generation)
             except Exception as exc:
-                logger.warning("🐦 忽略未通过登录验证的微博 Cookie 更新（%s）", type(exc).__name__)
+                logger.warning("🐦 微博 Cookie 更新请求失败，保留原值（%s）", type(exc).__name__)
 
     async def cookie_keepalive_loop(self) -> None:
         while True:
