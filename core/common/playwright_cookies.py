@@ -21,6 +21,7 @@ async def collect_browser_cookies(
     user_agent: str | None,
     timeout_ms: int,
     viewport: Mapping[str, int] | None = None,
+    cookie_domain: str | None = None,
 ) -> list[dict[str, Any]]:
     """Load cookies in Chromium and return the final same-site Cookie jar.
 
@@ -57,10 +58,10 @@ async def collect_browser_cookies(
                     {
                         "name": name,
                         "value": value,
-                        "url": refresh_url,
-                        "path": "/",
+                        **({"domain": cookie_domain, "path": "/", "secure": True}
+                           if cookie_domain else {"url": refresh_url}),
                     }
-                    for refresh_url in refresh_urls
+                    for refresh_url in (refresh_urls[:1] if cookie_domain else refresh_urls)
                     for name, value in cookies.items()
                     if name and value
                 ]

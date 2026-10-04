@@ -12,7 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -56,7 +56,7 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
             [
                 "# Netscape HTTP Cookie File",
                 ".weibo.com\tTRUE\t/\tTRUE\t0\tSUB\tweibo-sub",
-                "#HttpOnly_.weibo.cn\tTRUE\t/\tTRUE\t0\tSUBP\tweibo-subp",
+                "#HttpOnly_.weibo.com\tTRUE\t/\tTRUE\t0\tSUBP\tweibo-subp",
                 ".example.com\tTRUE\t/\tTRUE\t0\tignored\tvalue",
             ]
         )
@@ -99,7 +99,7 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(cookies, {"SUB": "visitor-sub", "SUBP": "visitor-subp"})
 
-    def test_server_cookie_updates_are_persisted_without_exposing_values(self):
+    async def test_server_cookie_updates_are_persisted_without_exposing_values(self):
         extractor = WeiboExtractor()
         extractor.set_cookie("SUB=old-sub; SUBP=old-subp")
 
@@ -113,10 +113,11 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
                     ("Set-Cookie", "SUB=new-sub; Domain=.weibo.com; Path=/; HttpOnly"),
                     ("Set-Cookie", "WBPSESS=session-1; Domain=.weibo.com; Path=/"),
                 ],
-                request=httpx.Request("GET", "https://weibo.com/"),
+                request=httpx.Request("GET", "https://weibo.com/", headers={"Cookie": extractor.cookie}),
             )
 
-            extractor._capture_cookie_updates(response)
+            extractor._validate_cookie_candidate = AsyncMock(side_effect=[("123", dict(extractor._user_cookies)), ("123", {"SUB": "new-sub", "SUBP": "old-subp", "WBPSESS": "session-1"})])
+            await extractor._capture_cookie_updates(response)
 
             self.assertEqual(
                 extractor._user_cookies,
@@ -128,7 +129,7 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(updates, [extractor.cookie])
 
-    def test_server_cookie_updates_ignore_non_weibo_responses_and_deletions(self):
+    async def test_server_cookie_updates_ignore_non_weibo_responses_and_deletions(self):
         extractor = WeiboExtractor()
         extractor.set_cookie("SUB=old-sub; SUBP=old-subp")
         response = httpx.Response(
@@ -140,77 +141,162 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
             request=httpx.Request("GET", "https://example.com/"),
         )
 
-        extractor._capture_cookie_updates(response)
+        await extractor._capture_cookie_updates(response)
 
         self.assertEqual(extractor._user_cookies, {"SUB": "old-sub", "SUBP": "old-subp"})
 
         response = httpx.Response(
             200,
             headers={"Set-Cookie": "SUB=; Max-Age=0; Domain=.weibo.com; Path=/"},
-            request=httpx.Request("GET", "https://weibo.com/"),
+            request=httpx.Request("GET", "https://weibo.com/", headers={"Cookie": extractor.cookie}),
         )
-        extractor._capture_cookie_updates(response)
-        self.assertEqual(extractor._user_cookies, {"SUBP": "old-subp"})
+        await extractor._capture_cookie_updates(response)
+        self.assertEqual(extractor._user_cookies, {"SUB": "old-sub", "SUBP": "old-subp"})
 
-    def test_browser_cookie_updates_are_persisted(self):
+    def test_browser_cookie_candidate_is_desktop_only(self):
         extractor = WeiboExtractor()
-        extractor.set_cookie("SUB=old-sub; SUBP=old-subp")
+        original = {"SUB": "desktop", "SUBP": "desktop-p"}
+        candidate = extractor._browser_cookie_candidate([
+            {"name": "SUB", "value": "new", "domain": ".weibo.com"},
+            {"name": "SUBP", "value": "new-p", "domain": ".weibo.com"},
+            {"name": "SUB", "value": "mobile", "domain": ".weibo.cn"},
+            {"name": "SUBP", "value": "visitor", "domain": "passport.weibo.com"},
+        ], original)
+        self.assertEqual(candidate, {"SUB": "new", "SUBP": "new-p"})
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            cookie_path = Path(tmpdir) / "cookies" / "weibo_cookies.txt"
-            updates: list[str] = []
-            extractor.set_cookie_storage(cookie_path, updates.append)
+    def test_mobile_netscape_cookies_are_not_used_as_desktop(self):
+        raw = "# Netscape HTTP Cookie File\n.weibo.cn\tTRUE\t/\tTRUE\t0\tSUB\tmobile"
+        self.assertEqual(WeiboExtractor._parse_cookie_header(raw), {})
 
-            extractor._capture_browser_cookie_updates(
-                [
-                    {"name": "SUB", "value": "new-sub", "domain": ".weibo.com"},
-                    {"name": "SUBP", "value": "new-subp", "domain": ".weibo.cn"},
-                    {"name": "WBPSESS", "value": "session-1", "domain": ".weibo.com"},
-                ]
-            )
-
-            self.assertEqual(
-                extractor._user_cookies,
-                {
-                    "SUB": "new-sub",
-                    "SUBP": "new-subp",
-                    "WBPSESS": "session-1",
-                },
-            )
-            self.assertEqual(
-                cookie_path.read_text("utf-8"),
-                "SUB=new-sub; SUBP=new-subp; WBPSESS=session-1\n",
-            )
-            self.assertEqual(updates, [extractor.cookie])
-
-    def test_browser_cookie_updates_do_not_clear_missing_login_cookie(self):
+    def test_configuration_does_not_reset_refresh_interval(self):
         extractor = WeiboExtractor()
-        extractor.set_cookie("SUB=old-sub; SUBP=old-subp")
+        extractor.set_cookie("SUB=old")
+        extractor._last_cookie_refresh_at = 123
+        extractor.set_cookie("SUB=old")
+        extractor.configure_cookie_refresh(True, 12)
+        self.assertEqual(extractor._last_cookie_refresh_at, 123)
 
-        extractor._capture_browser_cookie_updates(
-            [{"name": "visitor", "value": "visitor-value", "domain": ".weibo.com"}]
-        )
-
-        self.assertEqual(
-            extractor._user_cookies,
-            {"SUB": "old-sub", "SUBP": "old-subp"},
-        )
-
-    def test_browser_cookie_updates_ignore_visitor_domain(self):
+    async def test_invalid_and_different_account_candidates_are_not_saved(self):
         extractor = WeiboExtractor()
-        extractor.set_cookie("SUB=user-sub; SUBP=user-subp")
+        extractor.set_cookie("SUB=old")
+        response = httpx.Response(200, headers={"Set-Cookie": "SUB=new; Domain=.weibo.com"},
+                                  request=httpx.Request("GET", "https://weibo.com/", headers={"Cookie": extractor.cookie}))
+        from data.plugins.astrbot_plugin_link_resolver.core.weibo import WeiboAuthError
+        for error in ("logged out", "wrong account"):
+            extractor._validate_cookie_candidate = AsyncMock(side_effect=[("123", {"SUB": "old"}), WeiboAuthError(error)])
+            with tempfile.TemporaryDirectory() as directory:
+                target = Path(directory) / "cookie.txt"
+                callbacks = []
+                extractor.set_cookie_storage(target, callbacks.append)
+                await extractor._capture_cookie_updates(response)
+                self.assertEqual(extractor._user_cookies, {"SUB": "old"})
+                self.assertFalse(target.exists())
+                self.assertEqual(callbacks, [])
 
-        extractor._capture_browser_cookie_updates(
-            [
-                {"name": "SUB", "value": "visitor-sub", "domain": "passport.weibo.com"},
-                {"name": "SUBP", "value": "visitor-subp", "domain": "passport.weibo.com"},
-            ]
-        )
+    async def test_manual_replacement_during_validation_wins(self):
+        extractor = WeiboExtractor()
+        extractor.set_cookie("SUB=old")
+        original = dict(extractor._user_cookies)
+        generation = extractor._cookie_generation
+        extractor.set_cookie("SUB=manual")
+        extractor._commit_cookie_candidate(original, {"SUB": "new"}, generation)
+        self.assertEqual(extractor._user_cookies, {"SUB": "manual"})
 
-        self.assertEqual(
-            extractor._user_cookies,
-            {"SUB": "user-sub", "SUBP": "user-subp"},
-        )
+    async def test_validation_rechecks_login_rotation_but_accepts_auxiliary_churn(self):
+        extractor = WeiboExtractor()
+        requests = []
+        def respond(request):
+            requests.append(request.headers["Cookie"])
+            headers = {"Set-Cookie": "SUB=new; Domain=.weibo.com"} if len(requests) == 1 else {"Set-Cookie": "XSRF-TOKEN=rotating; Domain=.weibo.com"}
+            return httpx.Response(200, json={"data": {"login": True, "uid": "123"}}, headers=headers)
+        real_client = httpx.AsyncClient
+        with patch("data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor.httpx.AsyncClient",
+                   side_effect=lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs)):
+            uid, verified = await extractor._validate_cookie_candidate({"SUB": "old"}, "123")
+        self.assertEqual(uid, "123")
+        self.assertEqual(verified, {"SUB": "new"})
+        self.assertEqual(requests, ["SUB=old", "SUB=new"])
+
+    async def test_validation_rejects_logout_account_switch_and_deletion(self):
+        from data.plugins.astrbot_plugin_link_resolver.core.weibo import WeiboAuthError
+        extractor = WeiboExtractor()
+        real_client = httpx.AsyncClient
+        for payload, headers in [
+            ({"data": {"login": False}}, {}),
+            ({"data": {"login": True, "uid": "456"}}, {}),
+            ({"data": {"login": True, "uid": "123"}}, {"Set-Cookie": "SUB=; Max-Age=0; Domain=.weibo.com"}),
+        ]:
+            with patch("data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor.httpx.AsyncClient",
+                       side_effect=lambda **kwargs: real_client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload, headers=headers)), **kwargs)):
+                with self.assertRaises(WeiboAuthError):
+                    await extractor._validate_cookie_candidate({"SUB": "old"}, "123")
+
+    async def test_keepalive_fallback_saves_verified_login_rotation(self):
+        extractor = WeiboExtractor()
+        extractor.set_cookie("SUB=old")
+        extractor._validate_cookie_candidate = AsyncMock(side_effect=[
+            ("123", {"SUB": "seed"}), ("123", {"SUB": "verified"}),
+        ])
+        module = "data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor"
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "cookie.txt"
+            extractor.set_cookie_storage(target)
+            with patch(module + ".collect_browser_cookies", new=AsyncMock(side_effect=RuntimeError("unavailable"))) as browser:
+                await extractor._refresh_user_cookies()
+            self.assertEqual(browser.call_args.kwargs["cookies"], {"SUB": "seed"})
+            self.assertEqual(browser.call_args.kwargs["refresh_urls"], ("https://weibo.com/",))
+            self.assertEqual(target.read_text(encoding="utf-8"), "SUB=verified\n")
+        await extractor._refresh_user_cookies()
+        self.assertEqual(extractor._validate_cookie_candidate.await_count, 2)
+
+    async def test_background_loop_runs_without_parsing_and_cancels(self):
+        import asyncio
+        extractor = WeiboExtractor()
+        started = asyncio.Event()
+        async def refresh():
+            started.set()
+        extractor._refresh_user_cookies = AsyncMock(side_effect=refresh)
+        task = asyncio.create_task(extractor.cookie_keepalive_loop())
+        await asyncio.wait_for(started.wait(), timeout=1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        extractor._refresh_user_cookies.assert_awaited_once()
+
+    def test_desktop_response_rejects_mobile_sibling_domains_and_paths(self):
+        response = httpx.Response(200, headers=[
+            ("Set-Cookie", "SUB=mobile; Domain=.weibo.cn; Path=/"),
+            ("Set-Cookie", "SUB=sibling; Domain=passport.weibo.com; Path=/"),
+            ("Set-Cookie", "SUB=scoped; Domain=.weibo.com; Path=/other"),
+            ("Set-Cookie", "XSRF-TOKEN=ok; Domain=.weibo.com; Path=/"),
+        ], request=httpx.Request("GET", "https://weibo.com/"))
+        self.assertEqual(WeiboExtractor._desktop_cookie_updates(response), {"XSRF-TOKEN": "ok"})
+
+    async def test_plugin_lifecycle_starts_one_keepalive_task_and_stops_it(self):
+        import ast
+        import asyncio
+        from types import SimpleNamespace
+        source = Path(__file__).resolve().parents[1] / "main.py"
+        plugin = next(node for node in ast.parse(source.read_text(encoding="utf-8")).body
+                      if isinstance(node, ast.ClassDef) and node.name == "LinkResolverPlugin")
+        methods = [node for node in plugin.body if isinstance(node, ast.AsyncFunctionDef)
+                   and node.name in {"initialize", "terminate"}]
+        namespace = {"asyncio": asyncio}
+        exec(compile(ast.Module(body=methods, type_ignores=[]), str(source), "exec"), namespace)
+        started = asyncio.Event()
+        async def keepalive():
+            started.set()
+            await asyncio.Event().wait()
+        plugin = SimpleNamespace(_weibo_keepalive_task=None, font_auto_install_enabled=False,
+                                 weibo_extractor=SimpleNamespace(cookie_keepalive_loop=keepalive))
+        await namespace["initialize"](plugin)
+        task = plugin._weibo_keepalive_task
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await namespace["initialize"](plugin)
+        self.assertIs(plugin._weibo_keepalive_task, task)
+        await namespace["terminate"](plugin)
+        self.assertTrue(task.cancelled())
+        self.assertIsNone(plugin._weibo_keepalive_task)
 
     def test_extract_status_payload_accepts_wrapped_data_and_idstr(self):
         payload = {

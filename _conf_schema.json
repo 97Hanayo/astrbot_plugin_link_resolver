@@ -182,7 +182,7 @@
             "auto_refresh_cookies": {
                 "description": "自动续期微博Cookies",
                 "type": "bool",
-                "hint": "开启后定期用 Playwright 加载微博桌面端和移动端页面，保存浏览器最终 Cookie 状态；不会伪造或延长 Cookie 有效期，也不会用访客 Cookie 覆盖登录 Cookie。",
+                "hint": "开启后在后台定期加载 weibo.com 桌面端页面；新 Cookie 通过同账号登录验证后才会保存，浏览器不可用时尝试 HTTP 保活。服务端已失效的会话需要重新登录。",
                 "default": true
             },
             "cookie_refresh_interval_hours": {

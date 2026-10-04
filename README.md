@@ -247,8 +247,8 @@ data/plugin_data/astrbot_plugin_link_resolver/
 ```text
 SUB=...; SUBP=...; SSOLoginState=...; ALF=...
 ```
-- `weibo_settings.cookies` 支持 `weibo.com` / `weibo.cn` 导出的 `cookies.txt` 内容，也兼容 `a=1; b=2` 形式的 Cookie 字符串。配置保存后会写入 `cookies/weibo_cookies.txt`；配置留空时会自动读取该文件。
-- 开启 `weibo_settings.auto_refresh_cookies` 后，插件会定期用 Playwright 加载微博桌面端和移动端页面，读取浏览器最终 Cookie 状态并原子写回 `cookies/weibo_cookies.txt`；不会伪造 Cookie 有效期，也不会用访客 Cookie 覆盖登录 Cookie。若微博已经注销或不再下发续期 Cookie，仍需要重新导出登录 Cookie。
+- `weibo_settings.cookies` 支持 `weibo.com` 导出的 `cookies.txt` 内容（忽略 `weibo.cn` 移动端条目），也兼容 `a=1; b=2` 形式的 Cookie 字符串。配置保存后会写入 `cookies/weibo_cookies.txt`；配置留空时会自动读取该文件。
+- 开启 `weibo_settings.auto_refresh_cookies` 后，插件启动后会在后台按配置间隔用 Playwright 加载 `weibo.com` 桌面端页面，空闲期间也会尝试保活；浏览器不可用时尝试 HTTP 登录验证续期。更新后的 Cookie 必须通过桌面端登录验证且 UID 与原账号一致，才会原子写回 `cookies/weibo_cookies.txt`；不会混入移动端 Cookie，验证失败或刷新期间手动更换 Cookie 时保留原值。日志只记录更新字段名，不记录值；登录验证成功但未收到新值不能证明登录凭据已续期。若微博已经注销或不再下发续期 Cookie，仍需要重新导出登录 Cookie。
 - 微博分享链路风控较重，公开微博也可能出现临时访客校验。
 
 ### 抖音 Cookie（可选）

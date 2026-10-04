@@ -92,6 +92,7 @@ class LinkResolverPlugin(
         self._active_parse_tasks: set[asyncio.Task] = set()
         self.douyin_extractor = DouyinExtractor()
         self.weibo_extractor = WeiboExtractor()
+        self._weibo_keepalive_task: asyncio.Task | None = None
         self.xhs_extractor = XiaohongshuExtractor()
         self.twitter_extractor = TwitterExtractor()
         self.font_auto_install_enabled = False
@@ -108,6 +109,11 @@ class LinkResolverPlugin(
 
     async def initialize(self) -> None:
         """在后台线程安装可选字体, 避免阻塞 AstrBot 的事件循环."""
+        if self._weibo_keepalive_task is None or self._weibo_keepalive_task.done():
+            self._weibo_keepalive_task = asyncio.create_task(
+                self.weibo_extractor.cookie_keepalive_loop(),
+                name="link-resolver-weibo-cookie-keepalive",
+            )
         if not self.font_auto_install_enabled:
             return
 
@@ -115,6 +121,15 @@ class LinkResolverPlugin(
         self.managed_primary_font_ready = managed_paths.primary is not None
         self.managed_emoji_font_ready = managed_paths.emoji is not None
         self._refresh_config()
+
+    async def terminate(self) -> None:
+        if self._weibo_keepalive_task is not None:
+            self._weibo_keepalive_task.cancel()
+            try:
+                await self._weibo_keepalive_task
+            except asyncio.CancelledError:
+                pass
+            self._weibo_keepalive_task = None
 
     # region 配置
     def _get_config_value(self, key: str, default):
