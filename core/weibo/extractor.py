@@ -36,7 +36,8 @@ WEIBO_VISITOR_FORM = {
     "from": "weibo",
 }
 WEIBO_BROWSER_REFRESH_URLS = ("https://weibo.com/",)
-WEIBO_LOGIN_CHECK_URL = "https://weibo.com/ajax/config"
+# Same heartbeat endpoint used by the desktop site's official frontend.
+WEIBO_LOGIN_CHECK_URL = "https://weibo.com/ajax/config/get_config"
 WEIBO_LOGIN_COOKIE_NAMES = ("SUB", "SUBP", "WBPSESS")
 WEIBO_COOKIE_REFRESH_INTERVAL_SEC = 12 * 60 * 60
 WEIBO_BASE_HEADERS = {
@@ -360,19 +361,30 @@ class WeiboExtractor:
                     headers={"Cookie": self._serialize_cookie_header(candidate)},
                 )
                 if response.status_code != 200:
+                    if response.status_code == 404:
+                        raise WeiboAuthError(
+                            "桌面端登录验证接口返回 404，无法判断 Cookie 是否有效"
+                        )
                     raise WeiboAuthError(f"登录验证状态码 {response.status_code}")
                 try:
                     payload = response.json()
                 except ValueError as exc:
                     raise WeiboAuthError("登录验证返回非 JSON") from exc
                 data = payload.get("data") if isinstance(payload, dict) else None
-                if not isinstance(data, dict) or data.get("login") is not True:
-                    raise WeiboAuthError("桌面端接口未确认登录，请重新获取 weibo.com Cookie")
-                user = data.get("user")
-                uid = data.get("uid") or (user.get("id") if isinstance(user, dict) else None)
-                if not uid or (identity is not None and str(uid) != identity):
-                    raise WeiboAuthError("登录验证缺少 UID 或账号不一致")
-                identity = str(uid)
+                if (
+                    not isinstance(data, dict)
+                    or payload.get("ok") != 1
+                    or ("login" in data and data["login"] is not True)
+                ):
+                    raise WeiboAuthError("桌面端接口未确认登录")
+                # Desktop config identifies the logged-in account by UID;
+                # unlike m.weibo.cn/api/config it need not contain `login`.
+                uid = str(data.get("uid") or "")
+                if not uid.isascii() or not uid.isdecimal() or int(uid) <= 0:
+                    raise WeiboAuthError("桌面端登录配置缺少有效账号 UID")
+                if identity is not None and uid != identity:
+                    raise WeiboAuthError("登录验证的账号不一致")
+                identity = uid
                 updates = self._desktop_cookie_updates(response)
                 updated = self._merge_candidate(candidate, updates)
                 if all(updated.get(name) == candidate.get(name) for name in WEIBO_LOGIN_COOKIE_NAMES):

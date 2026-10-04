@@ -206,9 +206,10 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
         extractor = WeiboExtractor()
         requests = []
         def respond(request):
+            self.assertEqual(str(request.url), "https://weibo.com/ajax/config/get_config")
             requests.append(request.headers["Cookie"])
             headers = {"Set-Cookie": "SUB=new; Domain=.weibo.com"} if len(requests) == 1 else {"Set-Cookie": "XSRF-TOKEN=rotating; Domain=.weibo.com"}
-            return httpx.Response(200, json={"data": {"login": True, "uid": "123"}}, headers=headers)
+            return httpx.Response(200, json={"ok": 1, "data": {"uid": "123"}}, headers=headers)
         real_client = httpx.AsyncClient
         with patch("data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor.httpx.AsyncClient",
                    side_effect=lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs)):
@@ -222,14 +223,45 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
         extractor = WeiboExtractor()
         real_client = httpx.AsyncClient
         for payload, headers in [
-            ({"data": {"login": False}}, {}),
-            ({"data": {"login": True, "uid": "456"}}, {}),
-            ({"data": {"login": True, "uid": "123"}}, {"Set-Cookie": "SUB=; Max-Age=0; Domain=.weibo.com"}),
+            ({"ok": 1, "data": {"login": False}}, {}),
+            ({"ok": 1, "data": {"uid": "456"}}, {}),
+            ({"ok": 1, "data": {"uid": "123"}}, {"Set-Cookie": "SUB=; Max-Age=0; Domain=.weibo.com"}),
         ]:
             with patch("data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor.httpx.AsyncClient",
                        side_effect=lambda **kwargs: real_client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload, headers=headers)), **kwargs)):
                 with self.assertRaises(WeiboAuthError):
                     await extractor._validate_cookie_candidate({"SUB": "old"}, "123")
+
+    async def test_desktop_config_requires_success_and_positive_account_uid(self):
+        from data.plugins.astrbot_plugin_link_resolver.core.weibo import WeiboAuthError
+        extractor = WeiboExtractor()
+        real_client = httpx.AsyncClient
+        module = "data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor"
+        cases = [
+            {"ok": 1, "data": {"uid": "0"}},
+            {"ok": 1, "data": {"uid": 0}},
+            {"ok": 1, "data": {}},
+            {"ok": 1, "data": {"uid": "not-a-uid"}},
+            {"ok": 1, "data": {"uid": True}},
+            {"ok": 0, "data": {"uid": "123"}},
+            {"ok": 1, "data": {"uid": "123", "login": False}},
+        ]
+        for payload in cases:
+            with self.subTest(payload=payload), patch(module + ".httpx.AsyncClient",
+                    side_effect=lambda **kwargs: real_client(transport=httpx.MockTransport(
+                        lambda request: httpx.Response(200, json=payload)), **kwargs)):
+                with self.assertRaises(WeiboAuthError):
+                    await extractor._validate_cookie_candidate({"SUB": "cookie"})
+
+    async def test_login_endpoint_404_does_not_report_cookie_expiration(self):
+        from data.plugins.astrbot_plugin_link_resolver.core.weibo import WeiboAuthError
+        extractor = WeiboExtractor()
+        real_client = httpx.AsyncClient
+        with patch("data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor.httpx.AsyncClient",
+                side_effect=lambda **kwargs: real_client(transport=httpx.MockTransport(
+                    lambda request: httpx.Response(404)), **kwargs)):
+            with self.assertRaisesRegex(WeiboAuthError, "无法判断 Cookie 是否有效"):
+                await extractor._validate_cookie_candidate({"SUB": "cookie"})
 
     async def test_keepalive_fallback_saves_verified_login_rotation(self):
         extractor = WeiboExtractor()
