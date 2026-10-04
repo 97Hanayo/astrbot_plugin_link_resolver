@@ -301,63 +301,24 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(browser.call_args.kwargs["state_path"], target.with_suffix(".browser.json"))
             extractor._refresh_cookie_candidate.assert_not_awaited()
 
-    async def test_srf_restore_uses_fresh_alt_and_collects_redirect_cookie(self):
+    async def test_incomplete_browser_restore_does_not_use_http_config_as_success(self):
+        from data.plugins.astrbot_plugin_link_resolver.core.common.playwright_cookies import BrowserCookieRefreshError
         extractor = WeiboExtractor()
-        original = {"SUB": "old", "SRF": "recovery-session"}
-        requests = []
-        def respond(request):
-            requests.append(request)
-            if request.url.path == "/visitor/visitor":
-                self.assertIn("SRF=recovery-session", request.headers["Cookie"])
-                self.assertEqual(request.url.params["a"], "restore")
-                return httpx.Response(200, text='restore_back({"retcode":20000000,"data":{"alt":"fresh-ticket"}});')
-            if request.url.path == "/sso/v2/login":
-                self.assertEqual(request.url.params["alt"], "fresh-ticket")
-                self.assertEqual(request.url.params["source"], "visitor_restore")
-                return httpx.Response(302, headers={"Location": "https://weibo.com/", "Set-Cookie": "SUB=renewed; Domain=.weibo.com; Path=/; HttpOnly"})
-            self.assertEqual(request.url.host, "weibo.com")
-            self.assertIn("SUB=renewed", request.headers["Cookie"])
-            return httpx.Response(403)
-        real_client = httpx.AsyncClient
-        with patch("data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor.httpx.AsyncClient",
-                side_effect=lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs)):
-            restored = await extractor._restore_cookie_candidate(original)
-        self.assertEqual(restored, {"SUB": "renewed", "SRF": "recovery-session"})
-        self.assertEqual(len(requests), 3)
-        self.assertEqual(original["SUB"], "old")
-
-    async def test_restore_without_srf_or_alt_does_not_generate_guest_cookie(self):
-        extractor = WeiboExtractor()
+        extractor.set_cookie("SUB=old")
+        extractor._refresh_cookie_candidate = AsyncMock()
         module = "data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor"
-        with patch(module + ".httpx.AsyncClient") as client:
-            self.assertIsNone(await extractor._restore_cookie_candidate({"SUB": "old"}))
-            client.assert_not_called()
-        real_client = httpx.AsyncClient
-        requests = []
-        def respond(request):
-            requests.append(request)
-            return httpx.Response(200, text='restore_back({"retcode":20000000,"data":{}});')
-        with patch(module + ".httpx.AsyncClient",
-                side_effect=lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs)):
-            self.assertIsNone(await extractor._restore_cookie_candidate({"SUB": "old", "SRF": "session"}))
-        self.assertEqual(len(requests), 1)
+        with patch(module + ".collect_browser_cookies", new=AsyncMock(side_effect=BrowserCookieRefreshError("stuck on passport"))):
+            await extractor._refresh_user_cookies()
+        self.assertEqual(extractor._user_cookies, {"SUB": "old"})
+        extractor._refresh_cookie_candidate.assert_not_awaited()
 
-    async def test_restore_rejects_deletion_and_unrelated_redirects(self):
-        from data.plugins.astrbot_plugin_link_resolver.core.weibo import WeiboAuthError
-        extractor = WeiboExtractor()
-        real_client = httpx.AsyncClient
-        for headers in (
-            {"Set-Cookie": "SUB=; Max-Age=0; Domain=.weibo.com; Path=/"},
-            {"Location": "https://example.com/", "Set-Cookie": "SUB=new; Domain=.weibo.com; Path=/"},
-        ):
-            def respond(request):
-                if request.url.path == "/visitor/visitor":
-                    return httpx.Response(200, text='restore_back({"retcode":20000000,"data":{"alt":"fresh-ticket"}});')
-                return httpx.Response(302 if "Location" in headers else 200, headers=headers)
-            with patch("data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor.httpx.AsyncClient",
-                    side_effect=lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs)):
-                with self.assertRaises(WeiboAuthError):
-                    await extractor._restore_cookie_candidate({"SUB": "old", "SRF": "session"})
+    def test_navigation_logging_does_not_expose_alt_or_query(self):
+        module = "data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor"
+        with patch(module + ".logger") as logger:
+            WeiboExtractor._log_cookie_navigation("https://passport.weibo.com/sso/v2/login?alt=secret-ticket&source=visitor_restore")
+        args = logger.info.call_args.args
+        self.assertNotIn("secret-ticket", str(args))
+        self.assertIn("/sso/v2/login", args)
 
     async def test_background_loop_runs_without_parsing_and_cancels(self):
         import asyncio

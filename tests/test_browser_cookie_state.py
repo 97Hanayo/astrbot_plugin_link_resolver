@@ -24,7 +24,9 @@ class TestBrowserCookieState(unittest.IsolatedAsyncioTestCase):
         page = Mock()
         page.goto = AsyncMock(return_value=None, side_effect=RuntimeError("timeout") if failure else None)
         page.wait_for_load_state = AsyncMock()
+        page.wait_for_url = AsyncMock()
         page.close = AsyncMock()
+        self.page = page
         self.context.new_page = AsyncMock(return_value=page)
         self.context.close = AsyncMock()
         self.browser = Mock(new_context=AsyncMock(return_value=self.context), close=AsyncMock())
@@ -34,7 +36,7 @@ class TestBrowserCookieState(unittest.IsolatedAsyncioTestCase):
         module.async_playwright = Mock(return_value=runtime)
         return patch.dict(sys.modules, {"playwright.async_api": module})
 
-    async def collect(self, path, cookie="old"):
+    async def collect(self, path, cookie="old", **options):
         with patch.object(playwright_cookies, "launch_chromium", new=AsyncMock(return_value=self.browser)), \
              patch.object(playwright_cookies, "configure_playwright_browser_path"), \
              patch.object(playwright_cookies, "browser_channel_candidates", return_value=[]):
@@ -43,6 +45,7 @@ class TestBrowserCookieState(unittest.IsolatedAsyncioTestCase):
                 allowed_domains=("weibo.com",), cookie_domain=".weibo.com",
                 user_agent="test", timeout_ms=1000, state_path=path,
                 session_cookie_names=("SUB",),
+                **options,
             )
 
     async def test_restores_scoped_cookies_and_local_storage_across_runs(self):
@@ -88,6 +91,36 @@ class TestBrowserCookieState(unittest.IsolatedAsyncioTestCase):
                 self.context.cookies.return_value = []
                 with self.assertRaisesRegex(RuntimeError, "removed login cookies"):
                     await self.collect(path)
+            self.assertFalse(path.exists())
+
+    async def test_reads_cookies_only_after_return_from_passport(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "browser.json"
+            with self.setup_browser():
+                returned = False
+                async def finish_redirect(pattern, **kwargs):
+                    nonlocal returned
+                    self.assertIsNone(pattern.match("https://passport.weibo.com/sso/v2/login?alt=secret"))
+                    self.assertIsNotNone(pattern.match("https://weibo.com/"))
+                    returned = True
+                async def cookies(*args):
+                    self.assertTrue(returned)
+                    self.assertEqual(args[0], ["https://weibo.com/"])
+                    return [{"name": "SUB", "value": "new", "domain": ".weibo.com", "path": "/"}]
+                self.page.wait_for_url.side_effect = finish_redirect
+                self.context.cookies.side_effect = cookies
+                result = await self.collect(path, return_url_pattern=r"^https://weibo\.com/$")
+            self.assertEqual(result[0]["value"], "new")
+            self.page.close.assert_awaited_once()
+
+    async def test_unfinished_passport_redirect_does_not_save_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "browser.json"
+            with self.setup_browser():
+                self.page.wait_for_url.side_effect = TimeoutError("still on passport")
+                with self.assertRaises(playwright_cookies.BrowserCookieRefreshError):
+                    await self.collect(path, return_url_pattern=r"^https://weibo\.com/$")
+            self.context.cookies.assert_not_awaited()
             self.assertFalse(path.exists())
 
 

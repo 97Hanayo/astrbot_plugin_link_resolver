@@ -4,7 +4,7 @@
 
 ### 修复
 
-- 微博存在 SRF 恢复凭据时，尝试官方 `visitor/visitor?a=restore` 获取动态 ALT，再通过 `source=visitor_restore` 登录链路收集新 Cookie；不重放固定票据，不用访客 Cookie 替换登录凭据。
+- 微博使用 Playwright 从桌面端首页自然完成 passport 页面脚本和重定向恢复，等待返回微博首页后读取适用于首页的 Cookie；不再主动构造 SRF/ALT 登录请求，未完成恢复时保留原值。
 
 - 微博浏览器保活保存并复用 Cookie 和本地存储，保留重定向形成的会话状态；手动更换登录凭据时重新初始化。浏览器成功访问后保存更新，不再受配置接口响应结构限制。
 
