@@ -71,6 +71,37 @@ class TestBrowserCookieState(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("storage_state", self.browser.new_context.call_args.kwargs)
             self.assertEqual(self.context.add_cookies.call_args.args[0][0]["value"], "manual")
 
+    async def test_scoped_sso_export_survives_refresh_and_header_reload(self):
+        seeds = [
+            {"name": "SUB", "value": "old", "domain": ".weibo.com", "path": "/"},
+            {"name": "SSO", "value": "sina-session", "domain": ".sina.com.cn", "path": "/sso"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "browser.json"
+            with self.setup_browser():
+                await self.collect(path, scoped_cookies=seeds)
+            self.assertEqual(self.context.add_cookies.call_args.args[0], seeds)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertNotIn("sina-session", saved["source_digest"])
+            # Persistence writes a desktop header, but the scoped browser state
+            # must remain available after the next plugin startup.
+            with self.setup_browser():
+                await self.collect(path, cookie="renewed")
+            self.context.add_cookies.assert_not_awaited()
+            self.assertEqual(self.browser.new_context.call_args.kwargs["storage_state"], saved["storage_state"])
+
+    async def test_new_sso_export_replaces_saved_state_with_same_desktop_cookie(self):
+        seed = {"name": "SSO", "value": "first", "domain": ".sina.com.cn", "path": "/"}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "browser.json"
+            with self.setup_browser():
+                await self.collect(path, scoped_cookies=[seed])
+            replacement = {**seed, "value": "replacement"}
+            with self.setup_browser():
+                await self.collect(path, scoped_cookies=[replacement])
+            self.assertNotIn("storage_state", self.browser.new_context.call_args.kwargs)
+            self.assertEqual(self.context.add_cookies.call_args.args[0], [replacement])
+
     async def test_failed_navigation_preserves_saved_session(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "browser.json"

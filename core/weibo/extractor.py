@@ -139,6 +139,7 @@ class WeiboExtractor:
         self.download_original = download_original
         self.cookie = ""
         self._user_cookies: dict[str, str] = {}
+        self._browser_seed_cookies: list[dict[str, Any]] = []
         self._visitor_cookies: dict[str, str] | None = None
         self._cookie_storage_path: Path | None = None
         self._cookie_update_callback: Callable[[str], None] | None = None
@@ -150,10 +151,12 @@ class WeiboExtractor:
 
     def set_cookie(self, cookie: str | None) -> None:
         parsed = self._parse_cookie_header(cookie)
-        if parsed == self._user_cookies:
+        browser_seeds = self._parse_browser_cookie_source(cookie)
+        if parsed == self._user_cookies and browser_seeds == self._browser_seed_cookies:
             return
         self.cookie = (cookie or "").strip()
         self._user_cookies = parsed
+        self._browser_seed_cookies = browser_seeds
         self._cookie_generation += 1
         self._visitor_cookies = None
         self._last_cookie_refresh_at = 0.0
@@ -336,9 +339,14 @@ class WeiboExtractor:
                     session_cookie_names=WEIBO_LOGIN_COOKIE_NAMES,
                     return_url_pattern=r"^https://(?:www\.)?weibo\.com/(?:\?.*)?$",
                     on_navigation=self._log_cookie_navigation,
+                    scoped_cookies=self._browser_seed_cookies or None,
                 )
             except BrowserCookieRefreshError as exc:
-                raise WeiboAuthError("浏览器未完成微博首页恢复或未保留登录凭据，保留原值") from exc
+                raise WeiboAuthError(
+                    "浏览器未完成微博首页恢复或未保留登录凭据，保留原值；"
+                    "若微博 Cookie 无法恢复，请导入包含 weibo.com 和 login.sina.com.cn 的 "
+                    "Netscape Cookie 文件，保留 .login.sina.com.cn 的 tgc 等专属字段与域名信息"
+                ) from exc
             except Exception as exc:
                 logger.info(
                     "🐦 微博浏览器保活不可用，尝试 HTTP 保活（%s）",
@@ -396,6 +404,49 @@ class WeiboExtractor:
         # ALT and other temporary credentials can appear in the query string.
         parsed = urlparse(url)
         logger.info("🐦 微博浏览器保活跳转: %s://%s%s", parsed.scheme, parsed.hostname or "", parsed.path)
+        retcode = (parse_qs(parsed.query).get("retcode") or [""])[0]
+        if re.fullmatch(r"\d{1,8}", retcode):
+            logger.info("🐦 微博会话恢复返回 retcode=%s", retcode)
+
+    @staticmethod
+    def _parse_browser_cookie_source(raw: str | None) -> list[dict[str, Any]]:
+        """Keep SSO cookies scoped to their exported domains and paths.
+
+        Only the desktop cookies go into API headers. Sina cookies are used
+        by Chromium on the normal first-party SSO redirects, never copied to
+        the Weibo domain or manufactured from an expired desktop session.
+        """
+        seeds: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for line in (raw or "").splitlines():
+            line = line.strip()
+            http_only = line.startswith("#HttpOnly_")
+            if http_only:
+                line = line.removeprefix("#HttpOnly_")
+            elif line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 7:
+                continue
+            domain, _, path, secure, expiry, name, value = parts[:7]
+            domain = domain.strip().lower()
+            if domain.lstrip(".") not in {
+                "weibo.com", "www.weibo.com", "passport.weibo.com",
+                "sina.com.cn", "login.sina.com.cn",
+            }:
+                continue
+            name, value = name.strip(), value.strip()
+            if not WeiboExtractor._is_safe_cookie_pair(name, value) or not path.startswith("/"):
+                continue
+            try:
+                expires = int(expiry)
+            except ValueError:
+                continue
+            seed = {"name": name, "value": value, "domain": domain,
+                    "path": path, "secure": secure.upper() == "TRUE", "httpOnly": http_only}
+            if expires > 0:
+                seed["expires"] = expires
+            seeds[(domain, path, name)] = seed
+        return list(seeds.values())
 
     @staticmethod
     def _merge_candidate(

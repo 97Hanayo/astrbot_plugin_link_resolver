@@ -30,6 +30,41 @@ from data.plugins.astrbot_plugin_link_resolver.core.weibo import (
 
 
 class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
+    def test_sina_sso_cookies_are_seeded_without_entering_desktop_headers(self):
+        source = "\n".join([
+            ".weibo.com\tTRUE\t/\tTRUE\t0\tSUB\tdesktop",
+            "#HttpOnly_.sina.com.cn\tTRUE\t/\tTRUE\t2000000000\tSUB\tsina",
+            "login.sina.com.cn\tFALSE\t/sso\tFALSE\t0\tSSOLoginState\tstate",
+            "#HttpOnly_.login.sina.com.cn\tTRUE\t/\tTRUE\t2000000000\ttgc\tsso-ticket",
+            ".weibo.cn\tTRUE\t/\tTRUE\t0\tSUB\tmobile",
+            ".sina.com.cn.evil.com\tTRUE\t/\tTRUE\t0\tSUB\tunrelated",
+        ])
+        extractor = WeiboExtractor()
+        extractor.set_cookie(source)
+        self.assertEqual(extractor._user_cookies, {"SUB": "desktop"})
+        seeds = extractor._browser_seed_cookies
+        self.assertEqual(len(seeds), 4)
+        self.assertEqual(seeds[1]["domain"], ".sina.com.cn")
+        self.assertTrue(seeds[1]["httpOnly"])
+        self.assertEqual(seeds[1]["expires"], 2000000000)
+        self.assertEqual(seeds[2]["path"], "/sso")
+        self.assertEqual(seeds[3]["domain"], ".login.sina.com.cn")
+        self.assertEqual(seeds[3]["name"], "tgc")
+        generation = extractor._cookie_generation
+        extractor.set_cookie(source.replace("SUB\tsina", "SUB\tsina-new"))
+        self.assertEqual(extractor._cookie_generation, generation + 1)
+
+    async def test_browser_refresh_receives_sina_sso_source(self):
+        extractor = WeiboExtractor()
+        extractor.set_cookie(".weibo.com\tTRUE\t/\tTRUE\t0\tSUB\told\n"
+                             ".sina.com.cn\tTRUE\t/\tTRUE\t0\tSUB\tsina")
+        module = "data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor"
+        cookies = [{"name": "SUB", "value": "new", "domain": ".weibo.com", "path": "/"}]
+        with patch(module + ".collect_browser_cookies", new=AsyncMock(return_value=cookies)) as browser:
+            await extractor._refresh_user_cookies()
+        self.assertEqual(browser.call_args.kwargs["scoped_cookies"][1]["value"], "sina")
+        self.assertEqual(extractor._user_cookies, {"SUB": "new"})
+
     def test_extract_weibo_links_variants(self):
         text = (
             "看看这个 https://weibo.com/1234567890/AbCdEfGhI "
@@ -319,6 +354,16 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
         args = logger.info.call_args.args
         self.assertNotIn("secret-ticket", str(args))
         self.assertIn("/sso/v2/login", args)
+
+    def test_navigation_retcode_logging_never_exposes_tickets(self):
+        module = "data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor"
+        with patch(module + ".logger") as logger:
+            WeiboExtractor._log_cookie_navigation("https://weibo.com/?retcode=6102&ticket=secret")
+        self.assertEqual(logger.info.call_args.args[1], "6102")
+        self.assertNotIn("secret", str(logger.info.call_args_list))
+        with patch(module + ".logger") as logger:
+            WeiboExtractor._log_cookie_navigation("https://weibo.com/?retcode=secret-ticket")
+        self.assertEqual(logger.info.call_count, 1)
 
     async def test_background_loop_runs_without_parsing_and_cancels(self):
         import asyncio

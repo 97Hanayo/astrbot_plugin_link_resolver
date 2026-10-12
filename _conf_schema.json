@@ -196,7 +196,7 @@
             "cookies": {
                 "description": "微博Cookies",
                 "type": "string",
-                "hint": "可选。支持 Get cookies.txt LOCALLY 的 cookies.txt 内容或 k=v;... Cookie 字符串；填写后会保存到 cookies/weibo_cookies.txt。运行中微博服务端更新的 Cookie 也会写回该文件；留空则读取文件，否则尝试访客 Cookie。",
+                "hint": "可选。支持 Netscape cookies.txt 或 k=v;... Cookie 字符串。若需要新浪 SSO 恢复，请从已登录的浏览器同时导出 weibo.com 和 login.sina.com.cn 的 Cookie（包含 .login.sina.com.cn 的 tgc 等专属字段），保留域名与路径；新浪 Cookie 仅用于浏览器 SSO，不混入微博 API。填写后保存到 cookies/weibo_cookies.txt，服务端更新也会写回；留空读取文件，否则尝试访客 Cookie。",
                 "default": ""
             }
         }

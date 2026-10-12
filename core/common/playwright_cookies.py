@@ -34,6 +34,7 @@ async def collect_browser_cookies(
     session_cookie_names: Sequence[str] = (),
     return_url_pattern: str | None = None,
     on_navigation: Callable[[str], None] | None = None,
+    scoped_cookies: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Load cookies in Chromium and return the final same-site Cookie jar.
 
@@ -50,13 +51,21 @@ async def collect_browser_cookies(
         return hashlib.sha256(json.dumps(selected, sort_keys=True).encode()).hexdigest()
 
     input_digest = fingerprint(cookies)
+    source_digest = (
+        hashlib.sha256(json.dumps(list(scoped_cookies), sort_keys=True).encode()).hexdigest()
+        if scoped_cookies else None
+    )
     saved_state = None
     if state_path is not None:
         try:
             saved = json.loads(state_path.read_text(encoding="utf-8"))
             if input_digest in (saved.get("input_digest"), saved.get("output_digest")):
                 candidate_state = saved.get("storage_state")
-                if isinstance(candidate_state, dict):
+                # A new SSO export must replace stale saved state even when
+                # the desktop login fields happen to be unchanged.
+                if isinstance(candidate_state, dict) and (
+                    not scoped_cookies or saved.get("source_digest") == source_digest
+                ):
                     saved_state = candidate_state
         except (OSError, ValueError, AttributeError):
             pass
@@ -84,7 +93,7 @@ async def collect_browser_cookies(
                 context_options["storage_state"] = saved_state
             context = await browser.new_context(**context_options)
             try:
-                seed_cookies = [
+                seed_cookies = list(scoped_cookies) if scoped_cookies else [
                     {
                         "name": name,
                         "value": value,
@@ -171,6 +180,7 @@ async def collect_browser_cookies(
                     atomic_write_cookie_text(state_path, json.dumps({
                         "input_digest": input_digest,
                         "output_digest": fingerprint(effective),
+                        "source_digest": source_digest,
                         "storage_state": await context.storage_state(),
                     }))
                 return browser_cookies
