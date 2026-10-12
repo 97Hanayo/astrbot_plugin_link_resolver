@@ -355,12 +355,7 @@ class LinkResolverPlugin(
         # Preserve automatic renewal for unchanged inputs, but let a new
         # explicitly configured Cookie replace an older local file.
         try:
-            if "\n" not in weibo_cookies_str and ".weibo.com" in weibo_cookies_str:
-                weibo_cookies_str = re.sub(
-                    r"\s+(\.?(?:www\.|m\.)?weibo\.(?:com|cn)\s)",
-                    r"\n\1", weibo_cookies_str,
-                )
-                weibo_cookies_str = weibo_cookies_str.replace("# ", "\n# ").strip()
+            weibo_cookies_str = WeiboExtractor.normalize_cookie_source(weibo_cookies_str)
             configured_cookie = weibo_cookies_str
             weibo_cookies_str = load_cookie_source(configured_cookie, weibo_cookies_file)
             if configured_cookie and configured_cookie == weibo_cookies_str:

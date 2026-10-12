@@ -150,6 +150,7 @@ class WeiboExtractor:
         self._cookie_generation = 0
 
     def set_cookie(self, cookie: str | None) -> None:
+        cookie = self.normalize_cookie_source(cookie)
         parsed = self._parse_cookie_header(cookie)
         browser_seeds = self._parse_browser_cookie_source(cookie)
         if parsed == self._user_cookies and browser_seeds == self._browser_seed_cookies:
@@ -160,6 +161,28 @@ class WeiboExtractor:
         self._cookie_generation += 1
         self._visitor_cookies = None
         self._last_cookie_refresh_at = 0.0
+
+    @staticmethod
+    def normalize_cookie_source(raw: str | None) -> str:
+        """Recover Netscape records flattened by a single-line config input."""
+        text = (raw or "").strip()
+        candidate = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
+        record = (
+            r"(?:#HttpOnly_)?\.?[A-Za-z0-9.-]+\s+(?:TRUE|FALSE)\s+"
+            r"/\S*\s+(?:TRUE|FALSE)\s+\d+\s+[^\s=;]+\s+"
+        )
+        if not re.search(r"(?<!\S)" + record, candidate):
+            return text
+        candidate = re.sub(r"\s+(?=" + record + r")", "\n", candidate)
+        lines = []
+        for line in candidate.splitlines():
+            line = line.strip()
+            if re.match(record, line):
+                # Values remain intact; only the six Netscape separators are
+                # restored. Domain filtering happens in the actual parsers.
+                line = "\t".join(re.split(r"\s+", line, maxsplit=6))
+            lines.append(line)
+        return "\n".join(lines)
 
     def set_cookie_storage(
         self,

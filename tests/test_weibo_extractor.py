@@ -30,6 +30,30 @@ from data.plugins.astrbot_plugin_link_resolver.core.weibo import (
 
 
 class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
+    def test_flattened_netscape_configuration_preserves_all_sso_records(self):
+        source = "\n".join([
+            "# Netscape HTTP Cookie File",
+            "#HttpOnly_.weibo.com\tTRUE\t/\tTRUE\t0\tSUB\tdesktop",
+            "weibo.com\tFALSE\t/\tTRUE\t0\tWBPSESS\tsession==",
+            "#HttpOnly_.sina.com.cn\tTRUE\t/\tTRUE\t0\tSUB\tsina",
+            "#HttpOnly_.login.sina.com.cn\tTRUE\t/\tTRUE\t0\ttgc\tsina-ticket==",
+        ])
+        for raw in (source, source.replace("\n", " "),
+                    source.replace("\n", " ").replace("\t", " "),
+                    source.replace("\n", "\\n").replace("\t", "\\t")):
+            with self.subTest(raw_format=raw[:30]):
+                extractor = WeiboExtractor()
+                extractor.set_cookie(raw)
+                self.assertEqual(extractor._user_cookies, {"SUB": "desktop", "WBPSESS": "session=="})
+                self.assertEqual(len(extractor._browser_seed_cookies), 4)
+                self.assertEqual(extractor._browser_seed_cookies[-1]["value"], "sina-ticket==")
+                normalized = extractor.normalize_cookie_source(raw)
+                self.assertEqual(extractor.normalize_cookie_source(normalized), normalized)
+
+    def test_cookie_header_normalization_preserves_literal_escapes(self):
+        raw = r"SUB=value; example=literal\ntext\ttext"
+        self.assertEqual(WeiboExtractor.normalize_cookie_source(raw), raw)
+
     def test_sina_sso_cookies_are_seeded_without_entering_desktop_headers(self):
         source = "\n".join([
             ".weibo.com\tTRUE\t/\tTRUE\t0\tSUB\tdesktop",
