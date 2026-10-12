@@ -35,6 +35,7 @@ async def collect_browser_cookies(
     return_url_pattern: str | None = None,
     on_navigation: Callable[[str], None] | None = None,
     scoped_cookies: Sequence[Mapping[str, Any]] | None = None,
+    on_cookie_state: Callable[[list[dict[str, Any]], bool], None] | None = None,
 ) -> list[dict[str, Any]]:
     """Load cookies in Chromium and return the final same-site Cookie jar.
 
@@ -106,6 +107,8 @@ async def collect_browser_cookies(
                 ]
                 if seed_cookies and saved_state is None:
                     await context.add_cookies(seed_cookies)
+                if on_cookie_state is not None:
+                    on_cookie_state(await context.cookies(), saved_state is not None)
 
                 loaded = False
                 for refresh_url in refresh_urls:

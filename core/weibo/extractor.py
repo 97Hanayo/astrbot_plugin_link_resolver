@@ -340,6 +340,7 @@ class WeiboExtractor:
                     return_url_pattern=r"^https://(?:www\.)?weibo\.com/(?:\?.*)?$",
                     on_navigation=self._log_cookie_navigation,
                     scoped_cookies=self._browser_seed_cookies or None,
+                    on_cookie_state=self._log_browser_cookie_state,
                 )
             except BrowserCookieRefreshError as exc:
                 raise WeiboAuthError(
@@ -398,6 +399,23 @@ class WeiboExtractor:
         # UID is deliberately not required or compared. Persist actual browser
         # and Set-Cookie updates; a successful request is not proof of login.
         return self._merge_candidate(cookies, self._desktop_cookie_updates(response))
+
+    @staticmethod
+    def _log_browser_cookie_state(cookies: list[dict[str, Any]], restored: bool) -> None:
+        # Inspect Chromium's actual jar, after expired entries have been
+        # removed. Never print imported credential values or storage state.
+        sina_names = sorted({
+            str(cookie.get("name") or "") for cookie in cookies
+            if host_matches("login.sina.com.cn", (str(cookie.get("domain") or ""),))
+            and "/sso/login.php".startswith(str(cookie.get("path") or "/"))
+            and cookie.get("value")
+        })
+        logger.info(
+            "🐦 微博浏览器 Cookie 状态：来源=%s，总条目=%d，新浪登录字段=%s，tgc=%s",
+            "已保存会话" if restored else "本次导入",
+            len(cookies), ",".join(sina_names) or "无",
+            "有" if "tgc" in sina_names else "无",
+        )
 
     @staticmethod
     def _log_cookie_navigation(url: str) -> None:

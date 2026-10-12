@@ -365,6 +365,22 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
             WeiboExtractor._log_cookie_navigation("https://weibo.com/?retcode=secret-ticket")
         self.assertEqual(logger.info.call_count, 1)
 
+    def test_browser_cookie_diagnostics_use_domain_scope_and_hide_values(self):
+        module = "data.plugins.astrbot_plugin_link_resolver.core.weibo.extractor"
+        cookies = [
+            {"name": "SUB", "value": "secret-weibo", "domain": ".weibo.com", "path": "/"},
+            {"name": "SUB", "value": "secret-sina", "domain": ".sina.com.cn", "path": "/"},
+            {"name": "tgc", "value": "secret-ticket", "domain": ".login.sina.com.cn", "path": "/"},
+            {"name": "unrelated", "value": "secret-unrelated", "domain": "www.sina.com.cn", "path": "/"},
+        ]
+        with patch(module + ".logger") as logger:
+            WeiboExtractor._log_browser_cookie_state(cookies, True)
+        self.assertEqual(logger.info.call_args.args[1:], ("已保存会话", 4, "SUB,tgc", "有"))
+        self.assertNotIn("secret", str(logger.info.call_args))
+        with patch(module + ".logger") as logger:
+            WeiboExtractor._log_browser_cookie_state(cookies[:1], False)
+        self.assertEqual(logger.info.call_args.args[1:], ("本次导入", 1, "无", "无"))
+
     async def test_background_loop_runs_without_parsing_and_cancels(self):
         import asyncio
         extractor = WeiboExtractor()

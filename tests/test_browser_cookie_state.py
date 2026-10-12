@@ -102,6 +102,18 @@ class TestBrowserCookieState(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("storage_state", self.browser.new_context.call_args.kwargs)
             self.assertEqual(self.context.add_cookies.call_args.args[0], [replacement])
 
+    async def test_reports_effective_cookie_jar_and_state_source(self):
+        callback = Mock()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "browser.json"
+            with self.setup_browser():
+                await self.collect(path, on_cookie_state=callback)
+            self.assertFalse(callback.call_args.args[1])
+            self.assertEqual(callback.call_args.args[0], self.context.cookies.return_value)
+            with self.setup_browser():
+                await self.collect(path, cookie="renewed", on_cookie_state=callback)
+            self.assertTrue(callback.call_args.args[1])
+
     async def test_failed_navigation_preserves_saved_session(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "browser.json"
