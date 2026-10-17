@@ -40,6 +40,8 @@ XHS_ORIGINAL_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 XHS_VIDEO_DOWNLOAD_CHUNK_BYTES = 4 * 1024 * 1024
 XHS_VIDEO_DOWNLOAD_WORKERS = 8
 XHS_VIDEO_RANGE_RETRIES = 3
+XHS_MERGE_FORWARD_MAX_NODES = 10
+XHS_MERGE_FORWARD_CHUNK_DELAY_SEC = 1.0
 # endregion
 
 
@@ -1238,19 +1240,30 @@ class XiaohongshuMixin:
             should_merge = self.xhs_merge_send
 
         if should_merge:
-            nodes = Nodes([])
+            merge_nodes = []
             sender_uin = self._get_merge_sender_uin(event)
             if summary_text:
-                nodes.nodes.append(Node(uin=sender_uin, content=[Plain(summary_text)]))
+                merge_nodes.append(Node(uin=sender_uin, content=[Plain(summary_text)]))
             for component in chat_record_components:
                 merge_component = await self._prepare_component_for_merge_send(
                     component
                 )
-                nodes.nodes.append(Node(uin=sender_uin, content=[merge_component]))
-            if nodes.nodes:
+                merge_nodes.append(Node(uin=sender_uin, content=[merge_component]))
+            if len(merge_nodes) > XHS_MERGE_FORWARD_MAX_NODES:
+                logger.info(
+                    "🍠 小红书合并转发共 %d 个节点，将拆分为每条最多 %d 个节点发送",
+                    len(merge_nodes),
+                    XHS_MERGE_FORWARD_MAX_NODES,
+                )
+            for start in range(0, len(merge_nodes), XHS_MERGE_FORWARD_MAX_NODES):
+                nodes = Nodes(
+                    merge_nodes[start : start + XHS_MERGE_FORWARD_MAX_NODES]
+                )
                 yield event.chain_result([nodes])
+                if start + XHS_MERGE_FORWARD_MAX_NODES < len(merge_nodes):
+                    await asyncio.sleep(XHS_MERGE_FORWARD_CHUNK_DELAY_SEC)
             if standalone_video_components:
-                if nodes.nodes:
+                if merge_nodes:
                     await asyncio.sleep(2.0)
                 for i, component in enumerate(standalone_video_components):
                     yield event.chain_result([component])
