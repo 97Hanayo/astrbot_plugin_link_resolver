@@ -14,7 +14,7 @@ import asyncio
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html import unescape
 from http.cookies import SimpleCookie
 from pathlib import Path
@@ -92,6 +92,7 @@ class WeiboResult:
     source_url: str
     weibo_id: str | None = None
     created_at: str | None = None
+    live_photo_video_urls: list[str | None] = field(default_factory=list)
 
 
 class WeiboParseError(RuntimeError):
@@ -961,7 +962,9 @@ class WeiboExtractor:
         else:
             final_text = top_text or display_text
 
-        image_urls = self._extract_image_urls(display_status)
+        image_media = self._extract_image_media(display_status)
+        image_urls = [url for url, _ in image_media]
+        live_photo_video_urls = [video_url for _, video_url in image_media]
         video_url, cover_url = self._extract_video(display_status)
         if not cover_url and image_urls:
             cover_url = image_urls[0]
@@ -990,6 +993,7 @@ class WeiboExtractor:
             created_at=(
                 status.get("created_at") or display_status.get("created_at") or None
             ),
+            live_photo_video_urls=live_photo_video_urls,
         )
 
     @staticmethod
@@ -1029,24 +1033,39 @@ class WeiboExtractor:
         return str(item_type or "").strip().lower()
 
     def _extract_image_urls(self, status: dict[str, Any]) -> list[str]:
+        return [url for url, _ in self._extract_image_media(status)]
+
+    def _extract_image_media(
+        self, status: dict[str, Any]
+    ) -> list[tuple[str, str | None]]:
+        """Extract static images with their corresponding Live Photo videos."""
+        media: list[tuple[str, str | None]] = []
+        seen_urls: set[str] = set()
+
+        def append_image(pic_info: dict[str, Any]) -> None:
+            url = self._pick_image_url(pic_info)
+            if not url or url in seen_urls:
+                return
+            seen_urls.add(url)
+            media.append((url, self._pick_live_photo_video_url(pic_info)))
+
         pic_infos = status.get("pic_infos") or {}
         pic_ids = status.get("pic_ids") or list(pic_infos.keys())
-        urls: list[str] = []
         for pic_id in pic_ids:
             pic_info = pic_infos.get(pic_id) or {}
-            url = self._pick_image_url(pic_info)
-            if url and url not in urls:
-                urls.append(url)
+            if isinstance(pic_info, dict):
+                append_image(pic_info)
 
-        if urls:
-            return urls
+        if media:
+            return media
 
         for item in status.get("pics") or []:
             if not isinstance(item, dict):
                 continue
-            url = self._pick_image_url(item)
-            if url and url not in urls:
-                urls.append(url)
+            append_image(item)
+
+        if media:
+            return media
 
         for item in self._iter_mix_media_items(status):
             if self._mix_media_item_type(item) not in {
@@ -1060,10 +1079,41 @@ class WeiboExtractor:
             if not isinstance(data, dict):
                 continue
             pic_info = data.get("pic_info") if isinstance(data.get("pic_info"), dict) else data
-            url = self._pick_image_url(pic_info)
-            if url and url not in urls:
-                urls.append(url)
-        return urls
+            append_image(pic_info)
+        return media
+
+    @staticmethod
+    def _pick_live_photo_video_url(pic_info: dict[str, Any]) -> str | None:
+        """Return the video paired with a Weibo Live Photo, if present."""
+        if not isinstance(pic_info, dict):
+            return None
+        photo_type = str(pic_info.get("type") or "").strip().lower()
+        normalized_type = photo_type.replace("_", "").replace("-", "").replace(" ", "")
+        is_live_photo = (
+            normalized_type in {"livephoto", "movingphoto"}
+            or pic_info.get("live_photo") is True
+            or pic_info.get("is_live_photo") is True
+        )
+        if not is_live_photo:
+            return None
+
+        video = pic_info.get("video")
+        if isinstance(video, str) and video.startswith(("http://", "https://")):
+            return video
+        if not isinstance(video, dict):
+            return None
+
+        for key in ("url", "video_url", "play_url", "stream_url", "mp4_url"):
+            value = video.get(key)
+            if isinstance(value, str) and value.startswith(("http://", "https://")):
+                return value
+        media_info = video.get("media_info")
+        if isinstance(media_info, dict):
+            for key in ("url", "stream_url", "mp4_url", "stream_url_hd"):
+                value = media_info.get(key)
+                if isinstance(value, str) and value.startswith(("http://", "https://")):
+                    return value
+        return None
 
     def _pick_image_url(self, pic_info: dict[str, Any]) -> str | None:
         if not isinstance(pic_info, dict):

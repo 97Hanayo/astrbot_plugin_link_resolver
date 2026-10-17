@@ -38,12 +38,18 @@ class WeiboMixin:
         )
         return base_dir / f"{self._hash_url(url)}_{request_id}{suffix}"
 
-    async def _download_weibo_video(self, url: str, request_id: str) -> Path:
+    async def _download_weibo_video(
+        self, url: str, request_id: str, *, suffix: str = ".mp4"
+    ) -> Path:
         max_bytes = (
             self.max_video_size_mb * 1024 * 1024 if self.max_video_size_mb > 0 else None
         )
+        video_headers = {
+            **WEIBO_DOWNLOAD_HEADERS,
+            "Accept": "video/*,application/octet-stream,*/*;q=0.8",
+        }
         size_mb = await self._estimate_total_size_mb(
-            url, None, headers=WEIBO_DOWNLOAD_HEADERS
+            url, None, headers=video_headers
         )
         logger.debug(
             "🐦 估算微博视频大小: %s MB",
@@ -53,14 +59,119 @@ class WeiboMixin:
             raise SizeLimitExceeded("超过大小限制")
 
         output_path = self._build_weibo_path(url, is_video=True, request_id=request_id)
+        if suffix != output_path.suffix:
+            output_path = output_path.with_suffix(suffix)
         await self._download_stream(
             url,
             output_path,
             cookies=None,
             max_bytes=max_bytes,
-            headers=WEIBO_DOWNLOAD_HEADERS,
+            headers=video_headers,
         )
         return output_path
+
+    async def _convert_weibo_live_photo_to_gif(self, video_path: Path) -> Path:
+        """Convert a downloaded Weibo Live Photo movie to a looping GIF."""
+        output_path = video_path.with_suffix(".gif")
+        temp_path = output_path.with_name(f"{output_path.stem}.part.gif")
+        await asyncio.to_thread(output_path.parent.mkdir, parents=True, exist_ok=True)
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(video_path),
+            "-an",
+            "-filter_complex",
+            "fps=12,scale=w='min(480,iw)':h=-2:flags=lanczos,split[s0][s1];"
+            "[s0]palettegen=max_colors=128[p];"
+            "[s1][p]paletteuse=dither=bayer:bayer_scale=3",
+            "-loop",
+            "0",
+            str(temp_path),
+        ]
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout=180)
+            if process.returncode != 0:
+                details = stderr.decode(errors="replace").strip()[-1000:]
+                raise RuntimeError(details or "FFmpeg GIF 转换失败")
+            if not temp_path.exists() or temp_path.stat().st_size == 0:
+                raise RuntimeError("FFmpeg 未生成有效的 GIF 文件")
+            await asyncio.to_thread(temp_path.replace, output_path)
+            return output_path
+        except BaseException:
+            if process is not None and process.returncode is None:
+                process.kill()
+                await process.wait()
+            await asyncio.to_thread(temp_path.unlink, missing_ok=True)
+            await asyncio.to_thread(output_path.unlink, missing_ok=True)
+            raise
+
+    async def _convert_weibo_live_photo_to_mp4(self, video_path: Path) -> Path:
+        """Transcode a Weibo Live Photo clip to a broadly compatible MP4."""
+        output_path = video_path.with_suffix(".mp4")
+        temp_path = output_path.with_name(f"{output_path.stem}.part.mp4")
+        await asyncio.to_thread(output_path.parent.mkdir, parents=True, exist_ok=True)
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(video_path),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-vf",
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "23",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            str(temp_path),
+        ]
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout=180)
+            if process.returncode != 0:
+                details = stderr.decode(errors="replace").strip()[-1000:]
+                raise RuntimeError(details or "FFmpeg MP4 转码失败")
+            if not temp_path.exists() or temp_path.stat().st_size == 0:
+                raise RuntimeError("FFmpeg 未生成有效的 MP4 文件")
+            await asyncio.to_thread(temp_path.replace, output_path)
+            return output_path
+        except BaseException:
+            if process is not None and process.returncode is None:
+                process.kill()
+                await process.wait()
+            await asyncio.to_thread(temp_path.unlink, missing_ok=True)
+            await asyncio.to_thread(output_path.unlink, missing_ok=True)
+            raise
 
     async def _download_weibo_image(self, url: str, request_id: str) -> Path:
         output_path = self._build_weibo_path(url, is_video=False, request_id=request_id)
@@ -193,6 +304,8 @@ class WeiboMixin:
         chat_record_components: list[object] = []
         standalone_video_components: list[object] = []
         media_paths: list[Path] = []
+        intermediate_paths: list[Path] = []
+        image_paths_by_index: dict[int, Path] = {}
         failed_images = 0
 
         download_start = time.perf_counter()
@@ -223,6 +336,7 @@ class WeiboMixin:
                 try:
                     image_path = await self._download_weibo_image(url, request_id)
                     media_paths.append(image_path)
+                    image_paths_by_index[i] = image_path
                     component = Image.fromFileSystem(str(image_path.resolve()))
                     media_components.append(component)
                     chat_record_components.append(component)
@@ -237,6 +351,63 @@ class WeiboMixin:
                         len(image_urls),
                         str(exc),
                     )
+
+            if getattr(self, "weibo_enable_live_photo", False) and image_paths_by_index:
+                live_photo_video_urls = getattr(result, "live_photo_video_urls", [])
+                if not isinstance(live_photo_video_urls, list):
+                    live_photo_video_urls = []
+                live_format = getattr(self, "weibo_live_photo_format", "视频")
+                for image_index in sorted(image_paths_by_index):
+                    try:
+                        if image_index >= len(live_photo_video_urls):
+                            continue
+                        live_video_url = live_photo_video_urls[image_index]
+                        if not isinstance(live_video_url, str) or not live_video_url:
+                            continue
+                        live_request_id = f"{request_id}_live_{image_index}"
+                        live_video_path = await self._download_weibo_video(
+                            live_video_url,
+                            live_request_id,
+                            suffix=".source",
+                        )
+                        intermediate_paths.append(live_video_path)
+                        if live_format == "GIF":
+                            live_media_path = await self._convert_weibo_live_photo_to_gif(
+                                live_video_path
+                            )
+                            media_paths.append(live_media_path)
+                            component = Image.fromFileSystem(
+                                str(live_media_path.resolve())
+                            )
+                            media_components.append(component)
+                            chat_record_components.append(component)
+                        else:
+                            live_media_path = await self._convert_weibo_live_photo_to_mp4(
+                                live_video_path
+                            )
+                            media_paths.append(live_media_path)
+                            component = Video.fromFileSystem(
+                                str(live_media_path.resolve())
+                            )
+                            media_components.append(component)
+                            standalone_video_components.append(component)
+                    except asyncio.CancelledError:
+                        raise
+                    except SizeLimitExceeded:
+                        logger.warning(
+                            "⚠️ 微博 Live 图动态视频超过大小限制%s (图片%d/%d)，保留静态原图",
+                            source_tag,
+                            image_index + 1,
+                            len(result.image_urls),
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "⚠️ 微博 Live 图动态下载/转换失败%s (图片%d/%d)，保留静态原图: %s",
+                            source_tag,
+                            image_index + 1,
+                            len(result.image_urls),
+                            str(exc),
+                        )
 
         timing["download"] = time.perf_counter() - download_start
         if not media_components:
@@ -295,8 +466,9 @@ class WeiboMixin:
                 total_elapsed,
             )
         finally:
-            if media_paths:
-                await self.cleanup_files(media_paths, [])
+            cleanup_paths = [*media_paths, *intermediate_paths]
+            if cleanup_paths:
+                await self.cleanup_files(cleanup_paths, [])
 
     async def handle_weibo(self, event: AstrMessageEvent) -> None:
         if not self.weibo_enabled:

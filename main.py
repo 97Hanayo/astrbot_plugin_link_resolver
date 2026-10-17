@@ -334,6 +334,17 @@ class LinkResolverPlugin(
         self.weibo_download_original = bool(
             self._get_config_value("weibo_settings.download_original", True)
         )
+        self.weibo_enable_live_photo = bool(
+            self._get_config_value("weibo_settings.enable_live_photo", False)
+        )
+        _weibo_live_photo_format = str(
+            self._get_config_value("weibo_settings.live_photo_format", "视频")
+        ).strip()
+        self.weibo_live_photo_format = (
+            _weibo_live_photo_format
+            if _weibo_live_photo_format in ("视频", "GIF")
+            else "视频"
+        )
         self.weibo_auto_refresh_cookies = bool(
             self._get_config_value("weibo_settings.auto_refresh_cookies", True)
         )
@@ -514,6 +525,17 @@ class LinkResolverPlugin(
         self.xhs_concurrent_download = bool(
             self._get_config_value("xhs_settings.concurrent_download", True)
         )
+        self.xhs_enable_live_photo = bool(
+            self._get_config_value("xhs_settings.enable_live_photo", False)
+        )
+        _xhs_live_photo_format = str(
+            self._get_config_value("xhs_settings.live_photo_format", "视频")
+        ).strip()
+        self.xhs_live_photo_format = (
+            _xhs_live_photo_format
+            if _xhs_live_photo_format in ("视频", "GIF")
+            else "视频"
+        )
         self.xhs_enable_comment_screenshot = bool(
             self._get_config_value("xhs_settings.enable_comment_screenshot", False)
         )
@@ -655,7 +677,7 @@ class LinkResolverPlugin(
             else "关闭"
         )
         logger.info(
-            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,摘要=%s,时长<=%s), 抖音(合并=%s,摘要=%s,Cookie=%s), 小红书(上限=%s,原图=%s,摘要=%s,大图转文件=%s,评论截图=%s/%s/%d条,Cookie=%s), 微博(原图=%s,合并=%s,Cookie=%s,续期=%s/%dh), X(合并=%s,最多=%d), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
+            "📹 LinkResolver 配置: 平台=%s, B站(画质=%s,合并=%s,摘要=%s,时长<=%s), 抖音(合并=%s,摘要=%s,Cookie=%s), 小红书(上限=%s,原图=%s,摘要=%s,大图转文件=%s,Live图=%s/%s,评论截图=%s/%s/%d条,Cookie=%s), 微博(原图=%s,合并=%s,Live图=%s/%s,Cookie=%s,续期=%s/%dh), X(合并=%s,最多=%d), 字体(自动安装=%s,主字体=%s,Emoji=%s), 重试=%d",
             "/".join(enabled_list) if enabled_list else "无",
             self.video_quality.name,
             "开" if self.bili_merge_send else "关",
@@ -668,12 +690,16 @@ class LinkResolverPlugin(
             "开" if self.xhs_download_original else "关",
             "卡片" if self.xhs_render_card else "文字",
             xhs_image_limit_label,
+            "开" if self.xhs_enable_live_photo else "关",
+            self.xhs_live_photo_format,
             "开" if self.xhs_enable_comment_screenshot else "关",
             self.xhs_comment_screenshot_mode,
             self.xhs_comment_screenshot_max,
             "开" if self.xhs_cookies else "关",
             "开" if self.weibo_download_original else "关",
             "开" if self.weibo_merge_send else "关",
+            "开" if self.weibo_enable_live_photo else "关",
+            self.weibo_live_photo_format,
             "开" if self.weibo_cookie_enabled else "关",
             "开" if self.weibo_auto_refresh_cookies else "关",
             self.weibo_cookie_refresh_interval_hours,

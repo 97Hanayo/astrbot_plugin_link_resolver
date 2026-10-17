@@ -141,6 +141,7 @@ class XiaohongshuResult:
     source_url: str
     note_id: str | None = None
     video_streams: list[XiaohongshuVideoStream] = field(default_factory=list)
+    live_photo_video_urls: list[str | None] = field(default_factory=list)
 
 
 class XiaohongshuParseError(RuntimeError):
@@ -494,6 +495,7 @@ class XiaohongshuExtractor:
         image_list = note.get("imageList") or []
         image_urls = []
         file_ids = []
+        live_photo_video_urls = []
         for i, img in enumerate(image_list):
             if isinstance(img, dict):
                 # 记录详细的图片数据以便排查旧版笔记
@@ -503,9 +505,11 @@ class XiaohongshuExtractor:
                 img_url = self._get_original_image_url(img)
                 if img_url:
                     image_urls.append(img_url)
-                # 获取 fileId 用于尝试原图
-                file_id = self._get_file_id_from_image(img)
-                file_ids.append(file_id)  # 可能是 None，保持索引对应
+                    live_photo_video_urls.append(
+                        self._get_live_photo_video_url(img)
+                    )
+                    # 获取 fileId 用于尝试原图，保持与图片 URL 索引一致。
+                    file_ids.append(self._get_file_id_from_image(img))
         
         logger.debug("XHS Extracted file_ids: %s", file_ids)
 
@@ -546,7 +550,102 @@ class XiaohongshuExtractor:
             source_url=source_url,
             note_id=note_id,
             video_streams=video_streams,
+            live_photo_video_urls=live_photo_video_urls,
         )
+
+    def _get_live_photo_video_url(self, image: dict[str, Any]) -> str | None:
+        """提取图片笔记中 Live Photo 对应的短视频地址。"""
+        live_photo = image.get("livePhoto")
+        owners: list[dict[str, Any]] = []
+        if isinstance(live_photo, dict):
+            owners.append(live_photo)
+            media = live_photo.get("media")
+            if isinstance(media, dict):
+                owners.append(media)
+            video = live_photo.get("video")
+            if isinstance(video, dict):
+                owners.append(video)
+                video_media = video.get("media")
+                if isinstance(video_media, dict):
+                    owners.append(video_media)
+        if live_photo is True or isinstance(live_photo, dict):
+            owners.append(image)
+            image_video = image.get("video")
+            if isinstance(image_video, dict):
+                owners.append(image_video)
+                video_media = image_video.get("media")
+                if isinstance(video_media, dict):
+                    owners.append(video_media)
+
+        # 新版常见结构：image.livePhoto.media.stream；旧版还可能把
+        # stream 直接放在 image 对象上。
+        for owner in owners:
+            url = self._select_stream_url(owner.get("stream"))
+            if url:
+                return url
+
+        # 兼容部分笔记直接给 Live Photo 视频 URL 的结构。
+        for owner in [*owners, image]:
+            for key in ("livePhotoVideo", "liveUrl", "videoUrl"):
+                value = owner.get(key)
+                if isinstance(value, str) and value.startswith(("http://", "https://")):
+                    return value
+                if isinstance(value, dict):
+                    url = value.get("masterUrl") or value.get("url")
+                    if isinstance(url, str) and url.startswith(("http://", "https://")):
+                        return url
+                    url = self._select_stream_url(value.get("stream"))
+                    if url:
+                        return url
+        return None
+
+    def _select_stream_url(self, stream: Any) -> str | None:
+        """从一组编码流中按当前清晰度偏好选出可用地址。"""
+        if not isinstance(stream, dict):
+            return None
+        direct_url = stream.get("masterUrl") or stream.get("url")
+        if isinstance(direct_url, str) and direct_url.startswith(("http://", "https://")):
+            return direct_url
+
+        streams: list[XiaohongshuVideoStream] = []
+        known_codec_order = {"h265": 0, "h264": 1, "av1": 2, "h266": 3}
+        for codec, codec_streams in sorted(
+            stream.items(), key=lambda item: known_codec_order.get(str(item[0]).lower(), 99)
+        ):
+            if isinstance(codec_streams, dict):
+                codec_streams = [codec_streams]
+            if not isinstance(codec_streams, list):
+                continue
+            for item in codec_streams:
+                if not isinstance(item, dict):
+                    continue
+                url = item.get("masterUrl")
+                if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+                    continue
+                try:
+                    width = int(item.get("width") or 0)
+                except (TypeError, ValueError):
+                    width = 0
+                try:
+                    height = int(item.get("height") or 0)
+                except (TypeError, ValueError):
+                    height = 0
+                try:
+                    size = int(item.get("size")) if item.get("size") else None
+                except (TypeError, ValueError):
+                    size = None
+                streams.append(
+                    XiaohongshuVideoStream(
+                        url=url,
+                        width=width,
+                        height=height,
+                        size=size,
+                        codec=str(item.get("videoCodec") or codec),
+                        quality=str(item.get("qualityType") or item.get("streamDesc") or ""),
+                    )
+                )
+        selected = self._select_video_stream(streams)
+        return selected.url if selected else None
 
     def _get_original_image_url(self, img: dict[str, Any]) -> str | None:
         """从图片对象获取最佳图片 URL

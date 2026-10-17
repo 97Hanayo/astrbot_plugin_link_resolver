@@ -179,6 +179,22 @@
                 "hint": "开启后优先下载微博原图/大图；关闭则优先下载普通大图，但仍会自动回退到可用图片。",
                 "default": true
             },
+            "enable_live_photo": {
+                "description": "微博Live图转换",
+                "type": "bool",
+                "hint": "开启后，检测到微博Live图时会在发送静态原图的同时，额外发送其动态内容；动态下载或转换失败时仍发送静态原图。",
+                "default": false
+            },
+            "live_photo_format": {
+                "description": "微博Live图动态格式",
+                "type": "string",
+                "hint": "选择开启Live图转换后额外发送的动态格式；视频会统一转码为H.264/AAC MP4，GIF会使用FFmpeg转换。",
+                "default": "视频",
+                "options": [
+                    "视频",
+                    "GIF"
+                ]
+            },
             "auto_refresh_cookies": {
                 "description": "自动续期微博Cookies",
                 "type": "bool",
@@ -354,6 +370,22 @@
                 "type": "bool",
                 "hint": "开启后同时下载多张图片，大幅提升图集解析速度；关闭则逐张串行下载。如遇下载异常可尝试关闭。",
                 "default": true
+            },
+            "enable_live_photo": {
+                "description": "小红书Live图转换",
+                "type": "bool",
+                "hint": "开启后，检测到图文笔记中的Live图时会在发送静态原图的同时，额外发送其动态内容；动态下载或转换失败时仍发送静态原图。",
+                "default": false
+            },
+            "live_photo_format": {
+                "description": "小红书Live图动态格式",
+                "type": "string",
+                "hint": "选择开启Live图转换后额外发送的动态格式；视频直接发送平台提供的Live图短视频，GIF会使用FFmpeg转换。",
+                "default": "视频",
+                "options": [
+                    "视频",
+                    "GIF"
+                ]
             },
             "enable_comment_screenshot": {
                 "description": "小红书评论截图",
