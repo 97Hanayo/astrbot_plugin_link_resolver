@@ -247,12 +247,20 @@ class TwitterMixin:
             or has_mixed_media
             or (is_single_video and self.twitter_merge_send)
         )
-        should_send_chat_record = enable_merge_send and (
-            bool(summary_text) or bool(chat_record_components)
-        )
-
         try:
             send_start = time.perf_counter()
+            relay_video_nodes = None
+            if getattr(self, "video_relay_umo", ""):
+                relay_video_nodes = await self._relay_video_reference_nodes(
+                    event, standalone_video_components, source_tag
+                )
+            relay_video_ready = relay_video_nodes is not None
+            enable_merge_send = enable_merge_send or relay_video_ready
+            should_send_chat_record = enable_merge_send and (
+                bool(summary_text)
+                or bool(chat_record_components)
+                or relay_video_ready
+            )
             if should_send_chat_record:
                 nodes = Nodes([])
                 sender_uin = self._get_merge_sender_uin(event)
@@ -265,11 +273,13 @@ class TwitterMixin:
                         component
                     )
                     nodes.nodes.append(Node(uin=sender_uin, content=[merge_component]))
+                if relay_video_nodes:
+                    nodes.nodes.extend(relay_video_nodes)
                 await event.send(MessageChain([nodes]))
-                if has_video:
+                if has_video and not relay_video_ready:
                     await asyncio.sleep(1.0)
 
-            if has_video:
+            if has_video and not relay_video_ready:
                 for component in standalone_video_components:
                     await event.send(MessageChain([component]))
                     if component is not standalone_video_components[-1]:

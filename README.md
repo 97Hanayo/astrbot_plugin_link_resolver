@@ -47,6 +47,7 @@ ffmpeg -version
 | `enable_platforms` | 勾选要启用解析的平台 | B站, 抖音, 小红书, 微博, X, NGA |
 | `general_settings.retry_count` | 解析失败重试次数（所有平台共用） | 3 |
 | `general_settings.max_video_size_mb` | 最大视频大小限制 (MB)，超过则跳过下载或自动降画质 | 200 |
+| `general_settings.video_relay_umo` | 可选的 QQ 私聊中转 UMO；配置后视频先发送至私聊，再按返回的消息 ID 合并转发。留空时保持当前视频发送方式 | 空 |
 | `general_settings.reaction_emoji_enabled` | 识别链接后是否发表情回应 | ✅ 开启 |
 | `general_settings.reaction_emoji_list` | 回应表情 ID 列表(0~5个), 空=不回应 | `[127827]` |
 | `general_settings.reaction_emoji_strategy` | `随机` 抽1个 / `顺序循环` 全部依次回应(每个 0.5s) | `随机` |
@@ -55,6 +56,8 @@ ffmpeg -version
 | `general_settings.custom_emoji_font_path` | 自定义 Emoji 字体文件绝对路径，优先级最高 | 空 |
 | `general_settings.merge_send_as_sender` | 合并转发显示为原发送者 | ❌ 关闭 |
 | `general_settings.error_notify_mode` | 失败时群内通知模式 | `静默` |
+
+视频中转 UMO 填完整会话 ID，例如 `aiocqhttp:FriendMessage:123456`，不要只填 QQ 号。中转会话需与触发解析的会话属于同一个 aiocqhttp 平台实例。每次中转发送都会直接使用接口返回的消息 ID 创建转发节点，因此并发解析不会通过“读取中转会话最新消息”来匹配视频；中转发送失败时会回退为单独发送视频。
 
 ### 群过滤设置
 
@@ -87,7 +90,7 @@ ffmpeg -version
 |--------|------|--------|
 | `bili_settings.video_quality` | 默认下载画质 | `1080P高帧率` |
 | `bili_settings.allow_quality_fallback` | 超限时自动降画质 | ✅ 开启 |
-| `bili_settings.merge_send` | 合并转发发送（不开启则只发视频） | ❌ 关闭 |
+| `bili_settings.merge_send` | B站单P合并转发；配置通用视频中转 UMO 后单P也会合并 | ❌ 关闭 |
 | `bili_settings.summary_mode` | 合并发送时使用 `文字摘要` 或 `渲染卡片` | `文字摘要` |
 | `bili_settings.enable_multi_page` | 启用多P视频下载 | ✅ 开启 |
 | `bili_settings.multi_page_max` | 多P最多下载数量 | 3 |
@@ -101,7 +104,7 @@ ffmpeg -version
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `douyin_settings.max_media` | 图集最多发送媒体数 | 99 |
-| `douyin_settings.merge_send` | 视频使用合并转发 | ❌ 关闭 |
+| `douyin_settings.merge_send` | 视频使用合并转发；通用视频中转 UMO 配置后会自动合并 | ❌ 关闭 |
 | `douyin_settings.summary_mode` | 合并发送时使用 `文字摘要` 或 `渲染卡片` | `文字摘要` |
 | `douyin_settings.auto_refresh_cookies` | 定期访问抖音并保存服务端续期 Cookie | ✅ 开启 |
 | `douyin_settings.cookie_refresh_interval_hours` | Cookie 保活请求最短间隔（小时） | 12 |
@@ -112,7 +115,7 @@ ffmpeg -version
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `weibo_settings.max_media` | 图文微博最多发送图片数 | 99 |
-| `weibo_settings.merge_send` | 视频微博使用合并转发 | ❌ 关闭 |
+| `weibo_settings.merge_send` | 视频微博使用合并转发；通用视频中转 UMO 配置后会自动合并 | ❌ 关闭 |
 | `weibo_settings.download_original` | 原图优先下载并自动回退 | ✅ 开启 |
 | `weibo_settings.auto_refresh_cookies` | 定期用 Playwright 刷新微博浏览器 Cookie | ✅ 开启 |
 | `weibo_settings.cookie_refresh_interval_hours` | Cookie 保活请求最短间隔（小时） | 12 |
@@ -123,7 +126,7 @@ ffmpeg -version
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `xhs_settings.max_media` | 图集最多发送媒体数 | 99 |
-| `xhs_settings.merge_send` | 视频使用合并转发 | ❌ 关闭 |
+| `xhs_settings.merge_send` | 视频使用合并转发；通用视频中转 UMO 配置后会自动合并 | ❌ 关闭 |
 | `xhs_settings.max_video_quality` | 视频最大下载清晰度 | `720P` |
 | `xhs_settings.summary_mode` | 合并/逐条发送前使用 `文字摘要` 或 `渲染卡片` | `文字摘要` |
 | `xhs_settings.download_original` | 下载原图（通常为 JPEG） | ✅ 开启 |
@@ -143,7 +146,7 @@ ffmpeg -version
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `twitter_settings.max_media` | 单条推文最多发送媒体数 | 99 |
-| `twitter_settings.merge_send` | 单视频推文使用合并转发 | ❌ 关闭 |
+| `twitter_settings.merge_send` | 单视频推文使用合并转发；通用视频中转 UMO 配置后会自动合并 | ❌ 关闭 |
 | `twitter_settings.auto_refresh_cookies` | 定期访问 x.com 并保存服务端续期 Cookie | ✅ 开启 |
 | `twitter_settings.cookie_refresh_interval_hours` | Cookie 保活请求最短间隔（小时） | 12 |
 | `twitter_settings.cookies` | X Cookies 文本，留空时读取文件 | 空 |

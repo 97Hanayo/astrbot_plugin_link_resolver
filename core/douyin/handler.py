@@ -438,10 +438,14 @@ class DouyinMixin:
 
         # 判断是否为图文笔记（有图片或动图）
         is_image_post = bool(image_urls or dynamic_urls)
-        # 图文笔记始终合并转发；视频笔记根据配置决定
-        enable_merge_send = is_image_post or getattr(self, "douyin_merge_send", True)
-        render_card = getattr(self, "douyin_render_card", False)
         has_video = bool(standalone_video_components)
+        # 图文笔记始终合并转发；视频笔记根据配置决定
+        enable_merge_send = (
+            is_image_post
+            or getattr(self, "douyin_merge_send", True)
+            or (has_video and bool(getattr(self, "video_relay_umo", "")))
+        )
+        render_card = getattr(self, "douyin_render_card", False)
         summary_text = None
         if enable_merge_send and not render_card:
             summary_text = self._build_douyin_summary(
@@ -470,10 +474,22 @@ class DouyinMixin:
         # region 发送阶段
         send_start = time.perf_counter()
 
+        relay_video_nodes = None
+        if getattr(self, "video_relay_umo", ""):
+            relay_video_nodes = await self._relay_video_reference_nodes(
+                event, standalone_video_components, source_tag
+            )
+        relay_video_ready = relay_video_nodes is not None
+        enable_merge_send = (
+            is_image_post
+            or getattr(self, "douyin_merge_send", True)
+            or relay_video_ready
+        )
         should_send_chat_record = enable_merge_send and (
             bool(summary_text)
             or bool(chat_record_components)
             or bool(card_path and card_path.exists())
+            or relay_video_ready
         )
 
         if should_send_chat_record:
@@ -496,15 +512,17 @@ class DouyinMixin:
                     component
                 )
                 nodes.nodes.append(Node(uin=sender_uin, content=[merge_component]))
+            if relay_video_nodes:
+                nodes.nodes.extend(relay_video_nodes)
 
             logger.debug(
                 "🚀 抖音合并消息准备发送%s: 节点数=%d", source_tag, len(nodes.nodes)
             )
             await event.send(MessageChain([nodes]))
-            if has_video:
+            if has_video and not relay_video_ready:
                 await asyncio.sleep(1.0)
 
-        if has_video:
+        if has_video and not relay_video_ready:
             for component in standalone_video_components:
                 await event.send(MessageChain([component]))
                 if component is not standalone_video_components[-1]:

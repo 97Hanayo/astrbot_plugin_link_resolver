@@ -1198,6 +1198,7 @@ class BilibiliMixin:
 
             if is_multi_page:
                 nodes = Nodes([])
+                relay_fallback_videos: list[Video] = []
                 sender_uin = self._get_merge_sender_uin(event)
                 header_text = (
                     f"🎬 标题: {title}\n"
@@ -1249,14 +1250,24 @@ class BilibiliMixin:
                             Node(uin=sender_uin, content=[Plain(page_text)])
                         )
                         abs_video_path = str(video_path.resolve())
-                        merge_video_component = (
-                            await self._prepare_component_for_merge_send(
-                                Video.fromFileSystem(abs_video_path)
+                        video_component = Video.fromFileSystem(abs_video_path)
+                        if getattr(self, "video_relay_umo", ""):
+                            relay_refs = await self._relay_video_reference_nodes(
+                                event, [video_component], source_tag
                             )
-                        )
-                        nodes.nodes.append(
-                            Node(uin=sender_uin, content=[merge_video_component])
-                        )
+                            if relay_refs:
+                                nodes.nodes.extend(relay_refs)
+                            else:
+                                relay_fallback_videos.append(video_component)
+                        else:
+                            merge_video_component = (
+                                await self._prepare_component_for_merge_send(
+                                    video_component
+                                )
+                            )
+                            nodes.nodes.append(
+                                Node(uin=sender_uin, content=[merge_video_component])
+                            )
                     except asyncio.CancelledError:
                         raise
                     except SizeLimitExceeded:
@@ -1289,6 +1300,10 @@ class BilibiliMixin:
                     self._assert_video_file_ready(path, source_tag, request_id)
                 await event.send(MessageChain([Plain(intro_text)]))
                 await event.send(MessageChain([nodes]))
+                for index, component in enumerate(relay_fallback_videos):
+                    await event.send(MessageChain([component]))
+                    if index < len(relay_fallback_videos) - 1:
+                        await asyncio.sleep(1.0)
                 timing["send"] = time.perf_counter() - send_start
                 # endregion
 
@@ -1361,7 +1376,9 @@ class BilibiliMixin:
             card_path = None
             summary_text = None
             render_card = getattr(self, "bili_render_card", False)
-            if self.bili_merge_send and render_card:
+            relay_configured = bool(getattr(self, "video_relay_umo", ""))
+            merge_requested = self.bili_merge_send or relay_configured
+            if merge_requested and render_card:
                 card_path = await self._render_bili_card(
                     title=title,
                     author=up_name,
@@ -1371,7 +1388,7 @@ class BilibiliMixin:
                     likes=likes,
                     coins=coins,
                 )
-            elif self.bili_merge_send:
+            elif merge_requested:
                 summary_text = self._build_bili_summary(
                     title=title,
                     up_name=up_name,
@@ -1394,8 +1411,15 @@ class BilibiliMixin:
                 self._assert_video_file_ready(video_path, source_tag, request_id)
                 abs_video_path = str(video_path.resolve())
                 video_component = Video.fromFileSystem(abs_video_path)
+                relay_video_nodes = None
+                if relay_configured:
+                    relay_video_nodes = await self._relay_video_reference_nodes(
+                        event, [video_component], source_tag
+                    )
+                relay_video_ready = relay_video_nodes is not None
+                merge_video = self.bili_merge_send or relay_video_ready
 
-                if self.bili_merge_send:
+                if merge_video:
                     nodes = Nodes([])
                     sender_uin = self._get_merge_sender_uin(event)
 
@@ -1409,12 +1433,15 @@ class BilibiliMixin:
                             Node(uin=sender_uin, content=[card_component])
                         )
 
-                    merge_video_component = (
-                        await self._prepare_component_for_merge_send(video_component)
-                    )
-                    nodes.nodes.append(
-                        Node(uin=sender_uin, content=[merge_video_component])
-                    )
+                    if relay_video_nodes:
+                        nodes.nodes.extend(relay_video_nodes)
+                    elif not relay_configured:
+                        merge_video_component = (
+                            await self._prepare_component_for_merge_send(video_component)
+                        )
+                        nodes.nodes.append(
+                            Node(uin=sender_uin, content=[merge_video_component])
+                        )
                     logger.debug(
                         "🚀 B站合并消息准备发送%s: 节点数=%d",
                         source_tag,
@@ -1422,6 +1449,8 @@ class BilibiliMixin:
                     )
                     await event.send(MessageChain([Plain(intro_text)]))
                     await event.send(MessageChain([nodes]))
+                    if relay_configured and not relay_video_ready:
+                        await event.send(MessageChain([video_component]))
                 else:
                     # 非合并转发：先发视频信息，再发视频文件。
                     logger.debug("🚀 B站普通消息准备发送%s", source_tag)

@@ -1231,7 +1231,10 @@ class XiaohongshuMixin:
         )
         summary_enabled = (
             bool(image_paths)
-            or bool(result.video_url and self.xhs_merge_send)
+            or bool(
+                result.video_url
+                and (self.xhs_merge_send or bool(getattr(self, "video_relay_umo", "")))
+            )
             or comment_screenshot_enabled
         )
         render_card = getattr(self, "xhs_render_card", False)
@@ -1348,6 +1351,18 @@ class XiaohongshuMixin:
             # 视频笔记：根据配置决定
             should_merge = self.xhs_merge_send
 
+        relay_video_nodes = None
+        if (
+            standalone_video_components
+            and not (force_unmerge and is_image_post)
+            and getattr(self, "video_relay_umo", "")
+        ):
+            relay_video_nodes = await self._relay_video_reference_nodes(
+                event, standalone_video_components, source_tag
+            )
+        relay_video_ready = relay_video_nodes is not None
+        should_merge = should_merge or relay_video_ready
+
         if should_merge:
             merge_nodes = []
             sender_uin = self._get_merge_sender_uin(event)
@@ -1358,6 +1373,8 @@ class XiaohongshuMixin:
                     component
                 )
                 merge_nodes.append(Node(uin=sender_uin, content=[merge_component]))
+            if relay_video_nodes:
+                merge_nodes.extend(relay_video_nodes)
             if len(merge_nodes) > XHS_MERGE_FORWARD_MAX_NODES:
                 logger.info(
                     "🍠 小红书合并转发共 %d 个节点，将拆分为每条最多 %d 个节点发送",
@@ -1371,7 +1388,7 @@ class XiaohongshuMixin:
                 yield event.chain_result([nodes])
                 if start + XHS_MERGE_FORWARD_MAX_NODES < len(merge_nodes):
                     await asyncio.sleep(XHS_MERGE_FORWARD_CHUNK_DELAY_SEC)
-            if standalone_video_components:
+            if standalone_video_components and not relay_video_ready:
                 if merge_nodes:
                     await asyncio.sleep(2.0)
                 for i, component in enumerate(standalone_video_components):
@@ -1388,13 +1405,28 @@ class XiaohongshuMixin:
                     if i < len(media_components) - 1:
                         await asyncio.sleep(2.0)
             else:
-                if summary_text:
+                if summary_text and (
+                    is_image_post
+                    or self.xhs_merge_send
+                    or comment_screenshot_enabled
+                ):
                     yield event.chain_result([Plain(summary_text)])
                 prefix_components = [
                     component
                     for component in media_components
                     if not isinstance(component, Video)
                 ]
+                if (
+                    card_path
+                    and not self.xhs_merge_send
+                    and not comment_screenshot_enabled
+                ):
+                    card_path_value = str(card_path.resolve())
+                    prefix_components = [
+                        component
+                        for component in prefix_components
+                        if getattr(component, "path", "") != card_path_value
+                    ]
                 for component in prefix_components:
                     yield event.chain_result([component])
                     await asyncio.sleep(2.0)

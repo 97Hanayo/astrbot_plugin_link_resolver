@@ -25,6 +25,10 @@ from .core.common import (
     get_xhs_cookies_file,
     get_twitter_cookies_file,
 )
+from .core.common.qq_video_relay import (
+    RelayVideoReferenceNode,
+    send_videos_to_private_relay,
+)
 from .core.common.card_renderer import find_default_font, find_emoji_font
 from .core.common.font_manager import (
     get_managed_font_paths,
@@ -78,7 +82,7 @@ IGNORED_CARD_LINK_DOMAINS = (
     "astrbot_plugin_link_resolver",
     "acacia",
     "解析 & 下载 Bilibili/抖音/小红书/微博/X/NGA",
-    "1.1.13",
+    "1.1.14",
 )
 class LinkResolverPlugin(
     BilibiliMixin, DouyinMixin, XiaohongshuMixin, WeiboMixin, TwitterMixin, NgaMixin, Star
@@ -630,6 +634,9 @@ class LinkResolverPlugin(
         self.max_video_size_mb = int(
             self._get_config_value("general_settings.max_video_size_mb", 200)
         )
+        self.video_relay_umo = str(
+            self._get_config_value("general_settings.video_relay_umo", "")
+        ).strip()
         self.merge_send_as_sender = bool(
             self._get_config_value("general_settings.merge_send_as_sender", False)
         )
@@ -1419,6 +1426,42 @@ class LinkResolverPlugin(
             cover=getattr(component, "cover", ""),
             c=getattr(component, "c", 2),
         )
+
+    async def _relay_video_reference_nodes(
+        self,
+        event: AstrMessageEvent,
+        videos: list[Comp.Video],
+        source_tag: str = "",
+    ) -> list[RelayVideoReferenceNode] | None:
+        """Upload videos to the configured QQ private session and return forward refs.
+
+        The adapter's send action returns the message ID for each upload. Keeping
+        that ID with the current parse request avoids matching against shared
+        relay-chat history, which could race when multiple links are processed.
+        """
+
+        if not self.video_relay_umo or not videos:
+            return None
+
+        try:
+            references = await send_videos_to_private_relay(
+                event, self.video_relay_umo, videos
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "⚠️ 视频中转失败%s，回退为单独发送: %s", source_tag, str(exc)
+            )
+            return None
+
+        logger.debug(
+            "📨 视频已上传到 QQ 私聊中转%s: 数量=%d, UMO=%s",
+            source_tag,
+            len(references),
+            self.video_relay_umo,
+        )
+        return references
 
     # endregion
 
