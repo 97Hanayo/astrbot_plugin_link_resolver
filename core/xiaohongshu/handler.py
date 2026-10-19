@@ -1163,13 +1163,28 @@ class XiaohongshuMixin:
             if not isinstance(live_photo_video_urls, list):
                 live_photo_video_urls = []
             live_format = getattr(self, "xhs_live_photo_format", "视频")
-            for image_index in sorted(image_paths_by_index):
+            live_video_candidates = [
+                (image_index, live_photo_video_urls[image_index])
+                for image_index in sorted(image_paths_by_index)
+                if image_index < len(live_photo_video_urls)
+                and isinstance(live_photo_video_urls[image_index], str)
+                and live_photo_video_urls[image_index]
+            ]
+            live_video_limit = max(
+                0, int(getattr(self, "xhs_live_photo_video_limit", 1))
+            )
+            if live_video_limit > 0 and len(live_video_candidates) > live_video_limit:
+                skipped_count = len(live_video_candidates) - live_video_limit
+                logger.info(
+                    "🍠 小红书 Live 图动态超过每篇上限: 候选=%d, 上限=%d, 跳过=%d",
+                    len(live_video_candidates),
+                    live_video_limit,
+                    skipped_count,
+                )
+                live_video_candidates = live_video_candidates[:live_video_limit]
+
+            for image_index, live_video_url in live_video_candidates:
                 try:
-                    if image_index >= len(live_photo_video_urls):
-                        continue
-                    live_video_url = live_photo_video_urls[image_index]
-                    if not isinstance(live_video_url, str) or not live_video_url:
-                        continue
                     live_request_id = f"{request_id}_live_{image_index}"
                     live_video_path = await self._download_xhs_video(
                         live_video_url,

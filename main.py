@@ -532,6 +532,10 @@ class LinkResolverPlugin(
         self.xhs_enable_live_photo = bool(
             self._get_config_value("xhs_settings.enable_live_photo", False)
         )
+        self.xhs_live_photo_video_limit = max(
+            0,
+            int(self._get_config_value("xhs_settings.live_photo_video_limit", 1)),
+        )
         _xhs_live_photo_format = str(
             self._get_config_value("xhs_settings.live_photo_format", "视频")
         ).strip()

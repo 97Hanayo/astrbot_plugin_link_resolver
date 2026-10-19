@@ -377,6 +377,14 @@
                 "hint": "开启后，检测到图文笔记中的Live图时会在发送静态原图的同时，额外发送其动态内容；动态下载或转换失败时仍发送静态原图。",
                 "default": false
             },
+            "live_photo_video_limit": {
+                "description": "每篇小红书笔记最多发送的Live图动态数",
+                "type": "int",
+                "hint": "按图集顺序限制每篇笔记发送的Live图动态数。设为1只发送第一段；设为0不限制。",
+                "default": 1,
+                "min": 0,
+                "max": 99
+            },
             "live_photo_format": {
                 "description": "小红书Live图动态格式",
                 "type": "string",

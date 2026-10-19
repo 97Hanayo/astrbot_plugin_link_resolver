@@ -132,6 +132,9 @@ ffmpeg -version
 | `xhs_settings.download_original` | 下载原图（通常为 JPEG） | ✅ 开启 |
 | `xhs_settings.prefer_ci_png` | 优先将图片转码为 PNG | ✅ 开启 |
 | `xhs_settings.concurrent_download` | 并发下载图集图片 | ✅ 开启 |
+| `xhs_settings.enable_live_photo` | 额外发送图文笔记中的 Live 图动态 | ❌ 关闭 |
+| `xhs_settings.live_photo_video_limit` | 每篇笔记最多发送的 Live 动态数，`0` 表示不限制 | 1 |
+| `xhs_settings.live_photo_format` | Live 图动态格式：`视频` 或 `GIF` | `视频` |
 | `xhs_settings.auto_unmerge_threshold_mb` | 图片总大小超过此值时停止合并转发 (MB) | 50 |
 | `xhs_settings.qq_image_size_limit_mb` | 单张图片超过此值时转为文件发送 (MB) | 30 |
 | `xhs_settings.enable_comment_screenshot` | 开启评论截图，插入在摘要后、媒体前 | ❌ 关闭 |
