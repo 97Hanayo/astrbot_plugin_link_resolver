@@ -399,6 +399,15 @@ class DouyinMixin:
         failed_dynamics = 0
 
         image_urls = result.image_urls[: self.douyin_max_media]
+        logger.info(
+            "Douyin Live Photo status [%s]: enabled=%s, format=%s, parsed=%d, selected_images=%d, limit=%d",
+            request_id,
+            getattr(self, "douyin_enable_live_photo", False),
+            getattr(self, "douyin_live_photo_format", "视频"),
+            sum(bool(url) for url in result.live_photo_video_urls),
+            len(image_urls),
+            getattr(self, "douyin_live_photo_video_limit", 1),
+        )
         # Paired Live Photo videos have their own limit and never use image slots.
         dynamic_urls = (
             result.dynamic_urls[: self.douyin_max_media]
@@ -521,12 +530,25 @@ class DouyinMixin:
             if live_limit:
                 candidates = candidates[:live_limit]
             live_format = getattr(self, "douyin_live_photo_format", "视频")
+            logger.info(
+                "Douyin Live Photo candidates [%s]: static_ready=%d, selected=%d",
+                request_id,
+                len(image_paths_by_index),
+                len(candidates),
+            )
             for image_index, live_url in candidates:
                 try:
                     source_path = await self._download_douyin_video(
                         live_url, f"{request_id}_live_{image_index}"
                     )
                     media_paths.append(source_path)
+                    logger.info(
+                        "Douyin Live Photo source saved [%s]: image=%d, bytes=%d, path=%s",
+                        request_id,
+                        image_index + 1,
+                        source_path.stat().st_size,
+                        source_path,
+                    )
                     live_path = await self._convert_douyin_live_photo(
                         source_path, live_format
                     )
@@ -547,12 +569,21 @@ class DouyinMixin:
                         standalone_video_components.append(component)
                     media_components.append(component)
                     live_media_count += 1
+                    logger.info(
+                        "Douyin Live Photo converted [%s]: image=%d, format=%s, bytes=%d, path=%s",
+                        request_id,
+                        image_index + 1,
+                        live_format,
+                        live_path.stat().st_size,
+                        live_path,
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     failed_dynamics += 1
                     logger.warning(
-                        "Douyin Live Photo failed%s (image %d/%d); keeping static image: %s",
+                        "Douyin Live Photo failed [%s]%s (image %d/%d); keeping static image: %s",
+                        request_id,
                         source_tag,
                         image_index + 1,
                         len(image_urls),
@@ -619,11 +650,26 @@ class DouyinMixin:
         send_start = time.perf_counter()
 
         relay_video_nodes = None
+        if live_media_count:
+            logger.info(
+                "Douyin Live Photo delivery [%s]: live_ready=%d, videos=%d, relay_configured=%s",
+                request_id,
+                live_media_count,
+                len(standalone_video_components),
+                bool(getattr(self, "video_relay_umo", "")),
+            )
         if getattr(self, "video_relay_umo", ""):
             relay_video_nodes = await self._relay_video_reference_nodes(
                 event, standalone_video_components, source_tag
             )
         relay_video_ready = relay_video_nodes is not None
+        if live_media_count and standalone_video_components:
+            logger.info(
+                "Douyin Live Photo relay result [%s]: ready=%s, references=%d",
+                request_id,
+                relay_video_ready,
+                len(relay_video_nodes or []),
+            )
         enable_merge_send = (
             is_image_post
             or getattr(self, "douyin_merge_send", True)
@@ -659,10 +705,21 @@ class DouyinMixin:
             if relay_video_nodes:
                 nodes.nodes.extend(relay_video_nodes)
 
-            logger.debug(
-                "🚀 抖音合并消息准备发送%s: 节点数=%d", source_tag, len(nodes.nodes)
+            chunk_size = max(
+                1, min(100, int(getattr(self, "douyin_merge_forward_chunk_size", 20)))
             )
-            await event.send(MessageChain([nodes]))
+            logger.info(
+                "Douyin merged forward [%s]: nodes=%d, chunk_size=%d, chunks=%d",
+                request_id,
+                len(nodes.nodes),
+                chunk_size,
+                (len(nodes.nodes) + chunk_size - 1) // chunk_size,
+            )
+            for start in range(0, len(nodes.nodes), chunk_size):
+                chunk = Nodes(nodes.nodes[start : start + chunk_size])
+                await event.send(MessageChain([chunk]))
+                if start + chunk_size < len(nodes.nodes):
+                    await asyncio.sleep(1.0)
             if has_video and not relay_video_ready:
                 await asyncio.sleep(1.0)
 

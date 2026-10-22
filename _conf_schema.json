@@ -133,6 +133,14 @@
                     "渲染卡片"
                 ]
             },
+            "merge_forward_chunk_size": {
+                "description": "抖音合并转发每段条数",
+                "type": "int",
+                "hint": "聊天记录超过此条数时按顺序分段发送，摘要、图片、GIF及中转视频引用均计入条数。每段最多100条。",
+                "default": 20,
+                "min": 1,
+                "max": 100
+            },
             "enable_live_photo": {
                 "description": "抖音Live图转换",
                 "type": "bool",

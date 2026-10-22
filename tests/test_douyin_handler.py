@@ -181,6 +181,85 @@ class TestDouyinLivePhotoHandler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.event.send.await_count, 2)
         self.assertIsInstance(self.event.send.call_args_list[1].args[0].chain[0], Video)
 
+    async def test_70_images_and_70_relay_videos_split_into_default_chunks(self):
+        self.result.image_urls = [f"image{i}" for i in range(70)]
+        self.result.live_photo_video_urls = [f"video{i}" for i in range(70)]
+        self.result.dynamic_urls = list(self.result.live_photo_video_urls)
+        self.plugin.douyin_max_media = 99
+        self.plugin.douyin_live_photo_video_limit = 0
+        references = [
+            Node(uin="10001", content=[Plain(f"relay{i}")]) for i in range(70)
+        ]
+        self.plugin._relay_video_reference_nodes.return_value = references
+
+        async def send(chain):
+            self.plugin.cleanup_files.assert_not_awaited()
+
+        self.event.send.side_effect = send
+        with patch(
+            "data.plugins.astrbot_plugin_link_resolver.core.douyin.handler.asyncio.sleep",
+            new_callable=AsyncMock,
+        ) as sleep:
+            await DouyinMixin._process_douyin(self.plugin, self.event, "source")
+
+        chunks = [
+            call.args[0].chain[0].nodes for call in self.event.send.call_args_list
+        ]
+        self.assertEqual([len(chunk) for chunk in chunks], [20] * 7 + [1])
+        flattened = [node for chunk in chunks for node in chunk]
+        self.assertIsInstance(flattened[0].content[0], Plain)
+        self.assertEqual(
+            sum(isinstance(node.content[0], Image) for node in flattened), 70
+        )
+        self.assertTrue(
+            all(
+                actual is expected
+                for actual, expected in zip(flattened[-70:], references)
+            )
+        )
+        self.assertEqual(sleep.await_count, 7)
+        self.plugin.cleanup_files.assert_awaited_once()
+
+    async def test_custom_chunk_size_and_exact_boundary(self):
+        self.plugin.douyin_enable_live_photo = False
+        for size, expected in [(0, [1] * 4), (2, [2, 2]), (4, [4]), (5, [4])]:
+            with self.subTest(size=size):
+                self.plugin.douyin_merge_forward_chunk_size = size
+                self.event.send.reset_mock()
+                with patch(
+                    "data.plugins.astrbot_plugin_link_resolver.core.douyin.handler.asyncio.sleep",
+                    new_callable=AsyncMock,
+                ):
+                    await DouyinMixin._process_douyin(self.plugin, self.event, "source")
+                chunks = [
+                    call.args[0].chain[0].nodes
+                    for call in self.event.send.call_args_list
+                ]
+                self.assertEqual([len(chunk) for chunk in chunks], expected)
+
+    async def test_oversized_chunk_setting_is_capped_at_100_including_gifs(self):
+        self.result.image_urls = [f"image{i}" for i in range(70)]
+        self.result.live_photo_video_urls = [f"video{i}" for i in range(70)]
+        self.plugin.douyin_max_media = 99
+        self.plugin.douyin_live_photo_video_limit = 0
+        self.plugin.douyin_live_photo_format = "GIF"
+        self.plugin.douyin_merge_forward_chunk_size = 200
+        with patch(
+            "data.plugins.astrbot_plugin_link_resolver.core.douyin.handler.asyncio.sleep",
+            new_callable=AsyncMock,
+        ):
+            await DouyinMixin._process_douyin(self.plugin, self.event, "source")
+        chunks = [
+            call.args[0].chain[0].nodes for call in self.event.send.call_args_list
+        ]
+        self.assertEqual([len(chunk) for chunk in chunks], [100, 41])
+        self.assertEqual(
+            sum(
+                isinstance(node.content[0], Image) for chunk in chunks for node in chunk
+            ),
+            140,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

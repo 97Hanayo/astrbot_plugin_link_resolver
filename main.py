@@ -268,6 +268,15 @@ class LinkResolverPlugin(
         self.douyin_merge_send = bool(
             self._get_config_value("douyin_settings.merge_send", False)
         )
+        self.douyin_merge_forward_chunk_size = max(
+            1,
+            min(
+                100,
+                int(
+                    self._get_config_value("douyin_settings.merge_forward_chunk_size", 20)
+                ),
+            ),
+        )
         self.douyin_enable_live_photo = bool(
             self._get_config_value("douyin_settings.enable_live_photo", False)
         )

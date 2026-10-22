@@ -106,6 +106,7 @@ ffmpeg -version
 | `douyin_settings.max_media` | 图集最多发送媒体数 | 99 |
 | `douyin_settings.merge_send` | 视频使用合并转发；通用视频中转 UMO 配置后会自动合并 | ❌ 关闭 |
 | `douyin_settings.summary_mode` | 合并发送时使用 `文字摘要` 或 `渲染卡片` | `文字摘要` |
+| `douyin_settings.merge_forward_chunk_size` | 合并转发每段条数（1～100），包含摘要、图片、GIF和中转视频引用 | 20 |
 | `douyin_settings.enable_live_photo` | 在静态图片之外额外发送 Live 动态，失败时保留静态图 | ❌ 关闭 |
 | `douyin_settings.live_photo_video_limit` | 每篇最多附加的 Live 动态数，`0` 表示不限制 | 1 |
 | `douyin_settings.live_photo_format` | Live 动态格式：`视频`（H.264/AAC MP4）或 `GIF`，均需 FFmpeg | `视频` |
