@@ -145,6 +145,35 @@ class TestDouyinLivePhotos(unittest.IsolatedAsyncioTestCase):
             result.live_photo_video_urls, [None, "https://example.com/live.mp4", None]
         )
 
+    async def test_single_live_note_is_not_filtered_by_slides_only_request_source(self):
+        self.item["images"] = [
+            {"url_list": ["https://example.com/live.jpg"], "video": self.video("live")}
+        ]
+
+        async def get(url, *, params):
+            payload = (
+                {
+                    "aweme_details": None,
+                    "filter_list": [{"aweme_id": "123", "reason": 8}],
+                }
+                if params.get("request_source") == "200"
+                else {"aweme_details": [self.item]}
+            )
+            return httpx.Response(200, json=payload, request=httpx.Request("GET", url))
+
+        client = AsyncMock()
+        client.__aenter__.return_value.get.side_effect = get
+        self.extractor.parse_video = AsyncMock()
+        with patch(
+            "data.plugins.astrbot_plugin_link_resolver.core.douyin.httpx.AsyncClient",
+            return_value=client,
+        ):
+            result = await self.extractor.parse("https://www.douyin.com/note/123")
+
+        self.extractor.parse_video.assert_not_awaited()
+        self.assertEqual(result.image_urls, ["https://example.com/live.jpg"])
+        self.assertEqual(result.live_photo_video_urls, ["https://example.com/live.mp4"])
+
     async def test_share_page_regular_video_still_parses(self):
         import json
 

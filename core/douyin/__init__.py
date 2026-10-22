@@ -466,7 +466,8 @@ class DouyinExtractor:
         url = "https://www.iesdouyin.com/web/api/v2/aweme/slidesinfo/"
         params = {
             "aweme_ids": f"[{video_id}]",
-            "request_source": "200",
+            # Source 200 filters out ordinary image notes; 0 supports both note types.
+            "request_source": "0",
             # The web client aid is required for per-image Live Photo videos.
             "aid": "6383",
         }
