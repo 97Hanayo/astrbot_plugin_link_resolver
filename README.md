@@ -106,9 +106,14 @@ ffmpeg -version
 | `douyin_settings.max_media` | 图集最多发送媒体数 | 99 |
 | `douyin_settings.merge_send` | 视频使用合并转发；通用视频中转 UMO 配置后会自动合并 | ❌ 关闭 |
 | `douyin_settings.summary_mode` | 合并发送时使用 `文字摘要` 或 `渲染卡片` | `文字摘要` |
+| `douyin_settings.enable_live_photo` | 在静态图片之外额外发送 Live 动态，失败时保留静态图 | ❌ 关闭 |
+| `douyin_settings.live_photo_video_limit` | 每篇最多附加的 Live 动态数，`0` 表示不限制 | 1 |
+| `douyin_settings.live_photo_format` | Live 动态格式：`视频`（H.264/AAC MP4）或 `GIF`，均需 FFmpeg | `视频` |
 | `douyin_settings.auto_refresh_cookies` | 定期访问抖音并保存服务端续期 Cookie | ✅ 开启 |
 | `douyin_settings.cookie_refresh_interval_hours` | Cookie 保活请求最短间隔（小时） | 12 |
 | `douyin_settings.cookies` | 抖音 Cookies 文本，留空时读取文件 | 空 |
+
+Live 动态上限独立于 `max_media` 图片上限。GIF 随图片合并转发；视频使用通用视频中转，未配置中转或中转失败时单独发送。
 
 ### 微博设置
 

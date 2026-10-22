@@ -5,6 +5,7 @@ from typing import Any
 from msgspec import Struct, field
 
 from .errors import DouyinParseError
+
 # endregion
 
 
@@ -31,11 +32,20 @@ class Video(Struct):
     play_addr: PlayAddr
     cover: Cover
     duration: int
+    play_addr_h264: PlayAddr | None = None
 
 
 class Image(Struct):
     video: Video | None = None
     url_list: list[str] = field(default_factory=list)
+
+    @property
+    def live_video_url(self) -> str | None:
+        if self.video:
+            for addr in (self.video.play_addr_h264, self.video.play_addr):
+                if addr and addr.url_list:
+                    return addr.url_list[0].replace("playwm", "play")
+        return None
 
 
 class VideoData(Struct):
@@ -48,7 +58,15 @@ class VideoData(Struct):
 
     @property
     def image_urls(self) -> list[str]:
-        return [choice(image.url_list) for image in self.images if image.url_list] if self.images else []
+        return (
+            [choice(image.url_list) for image in self.images if image.url_list]
+            if self.images
+            else []
+        )
+
+    @property
+    def live_photo_video_urls(self) -> list[str | None]:
+        return [image.live_video_url for image in self.images or [] if image.url_list]
 
     @property
     def video_url(self) -> str | None:
@@ -58,7 +76,11 @@ class VideoData(Struct):
 
     @property
     def cover_url(self) -> str | None:
-        return choice(self.video.cover.url_list) if self.video and self.video.cover.url_list else None
+        return (
+            choice(self.video.cover.url_list)
+            if self.video and self.video.cover.url_list
+            else None
+        )
 
     @property
     def avatar_url(self) -> str | None:
@@ -80,7 +102,9 @@ class VideoInfoRes(Struct):
 
 
 class VideoOrNotePage(Struct):
-    video_info_res: VideoInfoRes = field(name="videoInfoRes", default_factory=VideoInfoRes)
+    video_info_res: VideoInfoRes = field(
+        name="videoInfoRes", default_factory=VideoInfoRes
+    )
 
 
 class LoaderData(Struct):
@@ -98,5 +122,9 @@ class RouterData(Struct):
             return page.video_info_res.video_data
         if page := self.loader_data.note_page:
             return page.video_info_res.video_data
-        raise DouyinParseError("missing video_(id)/page or note_(id)/page in router data")
+        raise DouyinParseError(
+            "missing video_(id)/page or note_(id)/page in router data"
+        )
+
+
 # endregion

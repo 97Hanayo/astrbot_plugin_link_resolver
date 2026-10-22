@@ -268,6 +268,20 @@ class LinkResolverPlugin(
         self.douyin_merge_send = bool(
             self._get_config_value("douyin_settings.merge_send", False)
         )
+        self.douyin_enable_live_photo = bool(
+            self._get_config_value("douyin_settings.enable_live_photo", False)
+        )
+        self.douyin_live_photo_video_limit = max(
+            0, int(self._get_config_value("douyin_settings.live_photo_video_limit", 1))
+        )
+        _douyin_live_photo_format = str(
+            self._get_config_value("douyin_settings.live_photo_format", "视频")
+        ).strip()
+        self.douyin_live_photo_format = (
+            _douyin_live_photo_format
+            if _douyin_live_photo_format in ("视频", "GIF")
+            else "视频"
+        )
         self.douyin_summary_mode = self._read_summary_mode(
             "douyin_settings.summary_mode"
         )

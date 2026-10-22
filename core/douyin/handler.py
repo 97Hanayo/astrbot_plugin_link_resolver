@@ -72,6 +72,94 @@ class DouyinMixin:
         )
         return output_path
 
+    async def _convert_douyin_live_photo(
+        self, video_path: Path, live_format: str
+    ) -> Path:
+        """Convert a Live Photo video to a looping GIF or compatible MP4.
+
+        Args:
+            video_path: Downloaded source video.
+            live_format: Either GIF or 视频.
+
+        Returns:
+            The converted media path.
+
+        Raises:
+            RuntimeError: If FFmpeg fails or produces an empty file.
+        """
+        suffix = ".gif" if live_format == "GIF" else ".mp4"
+        output_path = video_path.with_name(f"{video_path.stem}_converted{suffix}")
+        temp_path = output_path.with_name(f"{output_path.stem}.part{suffix}")
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(video_path),
+        ]
+        if live_format == "GIF":
+            command.extend(
+                [
+                    "-an",
+                    "-filter_complex",
+                    "fps=12,scale=w='min(480,iw)':h=-2:flags=lanczos,split[s0][s1];"
+                    "[s0]palettegen=max_colors=128[p];"
+                    "[s1][p]paletteuse=dither=bayer:bayer_scale=3",
+                    "-loop",
+                    "0",
+                ]
+            )
+        else:
+            command.extend(
+                [
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "0:a?",
+                    "-vf",
+                    "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-crf",
+                    "23",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    "-movflags",
+                    "+faststart",
+                ]
+            )
+        command.append(str(temp_path))
+        process = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout=180)
+            if process.returncode != 0:
+                details = stderr.decode(errors="replace").strip()[-1000:]
+                raise RuntimeError(details or "FFmpeg Live Photo conversion failed")
+            if not temp_path.exists() or temp_path.stat().st_size == 0:
+                raise RuntimeError("FFmpeg produced no valid Live Photo media")
+            await asyncio.to_thread(temp_path.replace, output_path)
+            return output_path
+        except BaseException:
+            if process is not None and process.returncode is None:
+                process.kill()
+                await process.wait()
+            await asyncio.to_thread(temp_path.unlink, missing_ok=True)
+            await asyncio.to_thread(output_path.unlink, missing_ok=True)
+            raise
+
     async def _download_douyin_cover(
         self, cover_url: str, request_id: str
     ) -> Path | None:
@@ -305,12 +393,18 @@ class DouyinMixin:
         chat_record_components: list[object] = []
         standalone_video_components: list[object] = []
         media_paths: list[Path] = []
+        image_paths_by_index: dict[int, Path] = {}
+        live_media_count = 0
         failed_images = 0
         failed_dynamics = 0
 
         image_urls = result.image_urls[: self.douyin_max_media]
-        remaining = max(self.douyin_max_media - len(image_urls), 0)
-        dynamic_urls = result.dynamic_urls[:remaining]
+        # Paired Live Photo videos have their own limit and never use image slots.
+        dynamic_urls = (
+            result.dynamic_urls[: self.douyin_max_media]
+            if not result.image_urls
+            else []
+        )
 
         # region 下载阶段
         download_start = time.perf_counter()
@@ -327,6 +421,7 @@ class DouyinMixin:
                     img_start = time.perf_counter()
                     image_path = await self._download_douyin_image(url, request_id)
                     media_paths.append(image_path)
+                    image_paths_by_index[i] = image_path
                     component = Image.fromFileSystem(str(image_path.resolve()))
                     media_components.append(component)
                     chat_record_components.append(component)
@@ -415,6 +510,55 @@ class DouyinMixin:
                 logger.error("❌ 抖音视频下载失败%s: %s", source_tag, str(exc))
                 return
 
+        if getattr(self, "douyin_enable_live_photo", False) and image_paths_by_index:
+            live_urls = result.live_photo_video_urls
+            candidates = [
+                (i, live_urls[i])
+                for i in sorted(image_paths_by_index)
+                if i < len(live_urls) and live_urls[i]
+            ]
+            live_limit = max(0, int(getattr(self, "douyin_live_photo_video_limit", 1)))
+            if live_limit:
+                candidates = candidates[:live_limit]
+            live_format = getattr(self, "douyin_live_photo_format", "视频")
+            for image_index, live_url in candidates:
+                try:
+                    source_path = await self._download_douyin_video(
+                        live_url, f"{request_id}_live_{image_index}"
+                    )
+                    media_paths.append(source_path)
+                    live_path = await self._convert_douyin_live_photo(
+                        source_path, live_format
+                    )
+                    media_paths.append(live_path)
+                    if (
+                        self.max_video_size_mb > 0
+                        and live_path.stat().st_size
+                        > self.max_video_size_mb * 1024 * 1024
+                    ):
+                        raise SizeLimitExceeded(
+                            "Converted Live Photo exceeds size limit"
+                        )
+                    if live_format == "GIF":
+                        component = Image.fromFileSystem(str(live_path.resolve()))
+                        chat_record_components.append(component)
+                    else:
+                        component = Video.fromFileSystem(str(live_path.resolve()))
+                        standalone_video_components.append(component)
+                    media_components.append(component)
+                    live_media_count += 1
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    failed_dynamics += 1
+                    logger.warning(
+                        "Douyin Live Photo failed%s (image %d/%d); keeping static image: %s",
+                        source_tag,
+                        image_index + 1,
+                        len(image_urls),
+                        str(exc),
+                    )
+
         timing["download"] = time.perf_counter() - download_start
         # endregion
 
@@ -451,7 +595,7 @@ class DouyinMixin:
             summary_text = self._build_douyin_summary(
                 result,
                 image_count=len(image_urls),
-                dynamic_count=len(dynamic_urls),
+                dynamic_count=len(dynamic_urls) + live_media_count,
                 display_link=target_link,
             )
 

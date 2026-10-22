@@ -2,29 +2,13 @@
 from random import choice
 
 from msgspec import Struct, field
+
+from .video import Image
+
 # endregion
 
 
 # region 数据模型
-class PlayAddr(Struct):
-    url_list: list[str]
-
-
-class Cover(Struct):
-    url_list: list[str]
-
-
-class Video(Struct):
-    play_addr: PlayAddr
-    cover: Cover
-    duration: int
-
-
-class Image(Struct):
-    video: Video | None = None
-    url_list: list[str] = field(default_factory=list)
-
-
 class Avatar(Struct):
     url_list: list[str]
 
@@ -46,7 +30,11 @@ class SlidesData(Struct):
 
     @property
     def avatar_url(self) -> str | None:
-        return choice(self.author.avatar_thumb.url_list) if self.author.avatar_thumb.url_list else None
+        return (
+            choice(self.author.avatar_thumb.url_list)
+            if self.author.avatar_thumb.url_list
+            else None
+        )
 
     @property
     def image_urls(self) -> list[str]:
@@ -54,9 +42,15 @@ class SlidesData(Struct):
 
     @property
     def dynamic_urls(self) -> list[str]:
-        return [choice(image.video.play_addr.url_list) for image in self.images if image.video and image.video.play_addr.url_list]
+        return [image.live_video_url for image in self.images if image.live_video_url]
+
+    @property
+    def live_photo_video_urls(self) -> list[str | None]:
+        return [image.live_video_url for image in self.images if image.url_list]
 
 
 class SlidesInfo(Struct):
     aweme_details: list[SlidesData] = field(default_factory=list)
+
+
 # endregion

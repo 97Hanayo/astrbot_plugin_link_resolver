@@ -1,25 +1,27 @@
 # region 导入
 import re
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import msgspec
+
 from astrbot.api import logger
 
-from .errors import DouyinParseError
-from .render import DouyinCardRenderer
-from .slides import SlidesInfo
-from .video import RouterData
 from ..common import (
     atomic_write_cookie_text,
     merge_cookie_updates,
     parse_set_cookie_updates,
     serialize_cookie_header,
 )
+from .errors import DouyinParseError
+from .render import DouyinCardRenderer
+from .slides import SlidesInfo
+from .video import RouterData
+
 # endregion
 
 # region 常量
@@ -51,9 +53,7 @@ DOUYIN_COOKIE_DOMAINS = (
 # endregion
 
 # region 链接正则
-DOUYIN_SHORT_LINK_PATTERN = (
-    r"(?:https?://)?(?:v|jx)\.douyin\.com/[a-zA-Z0-9_\-]+/?"
-)
+DOUYIN_SHORT_LINK_PATTERN = r"(?:https?://)?(?:v|jx)\.douyin\.com/[a-zA-Z0-9_\-]+/?"
 
 _DOUYIN_LONG_PATTERNS = [
     r"(?:https?://)?(?:www\.)?douyin\.com/(?P<ty>video|note)/(?P<vid>\d+)",
@@ -93,6 +93,9 @@ class DouyinResult:
     likes: int | None = None
     item_id: str | None = None
     comments: int | None = None
+    live_photo_video_urls: list[str | None] = field(default_factory=list)
+
+
 # endregion
 
 
@@ -114,6 +117,8 @@ def _normalize_url(url: str) -> str:
     if url.startswith("http://") or url.startswith("https://"):
         return url
     return f"https://{url}"
+
+
 # endregion
 
 
@@ -195,7 +200,9 @@ class DouyinExtractor:
         if self._cookie_storage_path is not None:
             try:
                 atomic_write_cookie_text(self._cookie_storage_path, self.cookie)
-                logger.info("抖音服务端更新的 Cookie 已持久化: %s", self._cookie_storage_path)
+                logger.info(
+                    "抖音服务端更新的 Cookie 已持久化: %s", self._cookie_storage_path
+                )
             except Exception as exc:
                 logger.warning("持久化抖音更新 Cookie 失败: %s", exc)
         if self._cookie_update_callback is not None:
@@ -245,13 +252,22 @@ class DouyinExtractor:
                 errors.append(f"iteminfo:{exc}")
             raise DouyinParseError("; ".join(errors) or "failed to parse douyin slides")
 
+        if ty == "note":
+            try:
+                return await self.parse_slides(vid, url)
+            except DouyinParseError as exc:
+                errors.append(f"slides:{exc}")
+
         if "iesdouyin.com" in url or "m.douyin.com/share" in url:
             try:
                 return await self.parse_video(url, url)
             except DouyinParseError as exc:
                 errors.append(f"share:{exc}")
 
-        for share_url in (self._build_m_douyin_url(ty, vid), self._build_iesdouyin_url(ty, vid)):
+        for share_url in (
+            self._build_m_douyin_url(ty, vid),
+            self._build_iesdouyin_url(ty, vid),
+        ):
             try:
                 return await self.parse_video(share_url, url)
             except DouyinParseError as exc:
@@ -314,6 +330,7 @@ class DouyinExtractor:
     @staticmethod
     def _build_m_douyin_url(ty: str, vid: str) -> str:
         return f"https://m.douyin.com/share/{ty}/{vid}"
+
     # region parse video
     async def parse_video(self, url: str, source_url: str) -> DouyinResult:
         pattern = re.compile(
@@ -345,7 +362,8 @@ class DouyinExtractor:
             video_url=video_url,
             cover_url=cover_url,
             image_urls=image_urls,
-            dynamic_urls=[],
+            dynamic_urls=[url for url in video_data.live_photo_video_urls if url],
+            live_photo_video_urls=video_data.live_photo_video_urls,
             source_url=source_url,
             item_id=video_data.aweme_id,
         )
@@ -406,16 +424,22 @@ class DouyinExtractor:
 
         image_urls: list[str] = []
         dynamic_urls: list[str] = []
+        live_photo_video_urls: list[str | None] = []
         for image in item.get("images") or []:
             url_list = image.get("url_list") or []
             image_url = self._pick_url(url_list)
             if image_url:
                 image_urls.append(image_url)
             image_video = image.get("video") or {}
-            image_play = self._pick_url((image_video.get("play_addr") or {}).get("url_list"))
+            image_play = self._pick_url(
+                (image_video.get("play_addr_h264") or {}).get("url_list")
+            ) or self._pick_url((image_video.get("play_addr") or {}).get("url_list"))
+            image_play = image_play.replace("playwm", "play") if image_play else None
+            if image_url:
+                live_photo_video_urls.append(image_play)
             if image_play:
-                dynamic_urls.append(image_play.replace("playwm", "play"))
-        
+                dynamic_urls.append(image_play)
+
         # 提取统计数据
         statistics = item.get("statistics") or {}
         likes = statistics.get("digg_count")
@@ -430,32 +454,42 @@ class DouyinExtractor:
             cover_url=cover_url,
             image_urls=image_urls,
             dynamic_urls=dynamic_urls,
+            live_photo_video_urls=live_photo_video_urls,
             source_url=source_url,
             likes=likes,
             comments=comments,
             item_id=video_id,
         )
+
     # region parse slides
     async def parse_slides(self, video_id: str, source_url: str) -> DouyinResult:
         url = "https://www.iesdouyin.com/web/api/v2/aweme/slidesinfo/"
         params = {
             "aweme_ids": f"[{video_id}]",
             "request_source": "200",
+            # The web client aid is required for per-image Live Photo videos.
+            "aid": "6383",
         }
         headers = {**ANDROID_HEADERS, "Referer": "https://www.douyin.com/"}
-        async with httpx.AsyncClient(
-            timeout=self.timeout,
-            headers=headers,
-            cookies=self._cookies or None,
-        ) as client:
-            response = await client.get(url, params=params)
-        self._capture_cookie_updates(response)
-        response.raise_for_status()
-
-        slides_data = msgspec.json.decode(response.content, type=SlidesInfo).aweme_details
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                headers=headers,
+                cookies=self._cookies or None,
+            ) as client:
+                response = await client.get(url, params=params)
+            self._capture_cookie_updates(response)
+            response.raise_for_status()
+            slides_data = msgspec.json.decode(
+                response.content, type=SlidesInfo
+            ).aweme_details
+        except (httpx.HTTPError, msgspec.DecodeError) as exc:
+            raise DouyinParseError(f"slides response failed: {exc}") from exc
         if not slides_data:
             raise DouyinParseError("slides data is empty")
         slides = slides_data[0]
+        if not slides.image_urls and not slides.dynamic_urls:
+            raise DouyinParseError("slides media is empty")
 
         return DouyinResult(
             title=slides.desc,
@@ -466,7 +500,9 @@ class DouyinExtractor:
             cover_url=None,
             image_urls=slides.image_urls,
             dynamic_urls=slides.dynamic_urls,
+            live_photo_video_urls=slides.live_photo_video_urls,
             source_url=source_url,
+            item_id=video_id,
         )
 
     @staticmethod
@@ -552,6 +588,8 @@ class DouyinExtractor:
         if response.status_code != 200:
             raise DouyinParseError(f"status: {response.status_code}")
         return response
+
+
 # endregion
 
 

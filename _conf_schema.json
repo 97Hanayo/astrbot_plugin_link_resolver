@@ -112,7 +112,7 @@
             "max_media": {
                 "description": "抖音最多发送媒体数",
                 "type": "int",
-                "hint": "抖音图集/动图最多发送的数量。",
+                "hint": "抖音图集最多发送的图片数量；额外附加的Live动态由Live图动态上限单独控制。",
                 "default": 99,
                 "min": 1,
                 "max": 99
@@ -132,6 +132,26 @@
                     "文字摘要",
                     "渲染卡片"
                 ]
+            },
+            "enable_live_photo": {
+                "description": "抖音Live图转换",
+                "type": "bool",
+                "hint": "开启后在静态图片之外额外发送Live动态；动态下载或转换失败时仍保留静态图。",
+                "default": false
+            },
+            "live_photo_video_limit": {
+                "description": "抖音每篇Live图动态上限",
+                "type": "int",
+                "hint": "每篇图集最多附加的Live动态数量，按图片顺序选取；0表示不限制，静态图片数量不受影响。",
+                "default": 1,
+                "min": 0
+            },
+            "live_photo_format": {
+                "description": "抖音Live图动态格式",
+                "type": "string",
+                "hint": "视频统一转码为H.264/AAC MP4，GIF转换为循环动图；两种格式均需要FFmpeg。",
+                "default": "视频",
+                "options": ["视频", "GIF"]
             },
             "auto_refresh_cookies": {
                 "description": "自动续期抖音Cookies",
