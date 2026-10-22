@@ -36,11 +36,12 @@ class DouyinMixin:
 
     async def _download_douyin_video(self, url: str, request_id: str) -> Path:
         cookies = getattr(self, "douyin_cookies", None)
+        headers = {**IOS_HEADERS, "Referer": "https://www.douyin.com/"}
         max_bytes = (
             self.max_video_size_mb * 1024 * 1024 if self.max_video_size_mb > 0 else None
         )
         size_mb = await self._estimate_total_size_mb(
-            url, None, cookies=cookies, headers=IOS_HEADERS
+            url, None, cookies=cookies, headers=headers
         )
         logger.debug(
             "🎵 估算抖音视频大小: %s MB",
@@ -54,7 +55,7 @@ class DouyinMixin:
             output_path,
             cookies=cookies,
             max_bytes=max_bytes,
-            headers=IOS_HEADERS,
+            headers=headers,
         )
         return output_path
 

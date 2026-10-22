@@ -4,6 +4,7 @@
 
 ### 修复
 
+- 抖音视频大小探测和下载统一携带本站 Referer，兼容部分视频 CDN 的来源校验。
 - 抖音图集接口改用兼容普通图文的 `request_source=0`，修复部分 Live 图文被 `request_source=200` 过滤、仅发送静态图且不进入视频中转的问题。
 - 抖音合并转发支持按条数分段发送，新增 `douyin_settings.merge_forward_chunk_size`，默认每段 20 条、最多 100 条；摘要、图片、GIF和中转视频引用一起计数并保留原顺序。
 - 小红书多图笔记默认每篇最多发送第一段 Live 图动态，避免一条笔记的多段 Live 视频全部进入中转账号；新增 `xhs_settings.live_photo_video_limit`，设为 `0` 可不限制。
