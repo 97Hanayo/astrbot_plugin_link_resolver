@@ -444,6 +444,7 @@ class TestWeiboExtractor(unittest.IsolatedAsyncioTestCase):
             started.set()
             await asyncio.Event().wait()
         plugin = SimpleNamespace(_weibo_keepalive_task=None, font_auto_install_enabled=False,
+                                 generic_enabled=False,
                                  weibo_extractor=SimpleNamespace(cookie_keepalive_loop=keepalive))
         await namespace["initialize"](plugin)
         task = plugin._weibo_keepalive_task

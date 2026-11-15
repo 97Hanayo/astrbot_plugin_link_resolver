@@ -24,6 +24,7 @@ from astrbot.api.message_components import Image, Node, Plain
 from data.plugins.astrbot_plugin_link_resolver.core.common.font_manager import (
     ManagedFontPaths,
 )
+from data.plugins.astrbot_plugin_link_resolver.core.generic import GenericExtractor
 from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu import (
     XiaohongshuExtractor,
     XiaohongshuResult,
@@ -238,6 +239,12 @@ class TestXhsCommentImageCompression(unittest.TestCase):
 
 
 class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _make_config_plugin():
+        plugin = LinkResolver.__new__(LinkResolver)
+        plugin.generic_extractor = GenericExtractor()
+        return plugin
+
     def test_conf_schema_exposes_comment_screenshot_settings(self):
         schema_path = Path(__file__).resolve().parents[1] / "_conf_schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -255,7 +262,7 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(items["cookies"]["default"], "")
 
     def test_refresh_config_defaults_comment_screenshot_settings(self):
-        plugin = LinkResolver.__new__(LinkResolver)
+        plugin = self._make_config_plugin()
         plugin.config = {}
         plugin.font_auto_install_enabled = False
         plugin.custom_primary_font_path = None
@@ -305,7 +312,7 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.xhs_cookies, "")
 
     def test_refresh_config_preserves_zero_comment_limits(self):
-        plugin = LinkResolver.__new__(LinkResolver)
+        plugin = self._make_config_plugin()
         plugin.config = {
             "xhs_settings": {
                 "comment_screenshot_max": 0,
@@ -356,7 +363,7 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.xhs_comment_screenshot_max, 0)
 
     def test_refresh_config_writes_xhs_cookies_to_file(self):
-        plugin = LinkResolver.__new__(LinkResolver)
+        plugin = self._make_config_plugin()
         raw_cookies = "# Netscape HTTP Cookie File .xiaohongshu.com TRUE / TRUE 0 a1 v1"
         plugin.config = {"xhs_settings": {"cookies": raw_cookies}}
         plugin.font_auto_install_enabled = False
@@ -411,7 +418,7 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
             self.assertIn("\n.xiaohongshu.com", cookies_file.read_text("utf-8"))
 
     def test_refresh_config_reads_xhs_cookies_from_file_when_config_empty(self):
-        plugin = LinkResolver.__new__(LinkResolver)
+        plugin = self._make_config_plugin()
         plugin.config = {}
         plugin.font_auto_install_enabled = False
         plugin.custom_primary_font_path = None
@@ -466,7 +473,7 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plugin.xhs_cookies, "a1=v1; web_session=abc")
 
     def test_refresh_config_writes_weibo_cookies_to_file(self):
-        plugin = LinkResolver.__new__(LinkResolver)
+        plugin = self._make_config_plugin()
         raw_cookies = "# Netscape HTTP Cookie File .weibo.com TRUE / TRUE 0 SUB v1"
         plugin.config = {"weibo_settings": {"cookies": raw_cookies}}
         plugin.font_auto_install_enabled = False
@@ -522,7 +529,7 @@ class TestXhsCommentConfig(unittest.IsolatedAsyncioTestCase):
             self.assertIn("\n.weibo.com", plugin.weibo_extractor.cookie)
 
     def test_refresh_config_reads_weibo_cookies_from_file_when_config_empty(self):
-        plugin = LinkResolver.__new__(LinkResolver)
+        plugin = self._make_config_plugin()
         plugin.config = {}
         plugin.font_auto_install_enabled = False
         plugin.custom_primary_font_path = None

@@ -40,6 +40,7 @@ from ..common.card_renderer import (
     UniversalCardRenderer,
     get_theme_for_platform,
 )
+from ..common.file_lifecycle import save_image_file
 
 # endregion
 
@@ -56,9 +57,11 @@ _BILI_HEADERS = {
 BILI_VIDEO_URL_PATTERN = (
     r"(https?://)?(?:(?:www|m)\.)?bilibili\.com/video/(BV[0-9A-Za-z]{10}|av\d+)"
 )
-BILI_SHORT_LINK_PATTERN = r"https?://(?:b23\.tv|bili2233\.cn)/[A-Za-z\d._?%&+\-=/#]+"
-BILI_BV_PATTERN = r"\bBV[0-9A-Za-z]{10}\b"
-BILI_AV_PATTERN = r"\bav\d+\b"
+BILI_SHORT_LINK_PATTERN = (
+    r"(?:https?://)?(?:b23\.tv|bili2233\.cn)/[A-Za-z\d._?%&+\-=/#]+"
+)
+BILI_BV_PATTERN = r"(?<![0-9A-Za-z_])BV[0-9A-Za-z]{10}(?![0-9A-Za-z_])"
+BILI_AV_PATTERN = r"(?<![0-9A-Za-z_])av\d+(?![0-9A-Za-z_])"
 BILI_MESSAGE_PATTERN = rf"(?s).*(?:{BILI_VIDEO_URL_PATTERN}|{BILI_SHORT_LINK_PATTERN}|{BILI_BV_PATTERN}|{BILI_AV_PATTERN})"
 
 QUALITY_ALIAS_MAP = {
@@ -283,12 +286,13 @@ class BilibiliMixin:
     def extract_links_from_text(self, text: str, include_ids: bool = True) -> list[str]:
         links: list[str] = []
         url_patterns = [
-            r"https?://(?:www\.)?bilibili\.com/video/[^\s\'\"<>]+",
-            r"https?://m\.bilibili\.com/video/[^\s\'\"<>]+",
-            r"https?://(?:b23\.tv|bili2233\.cn)/[^\s\'\"<>]+",
+            r"(?:https?://)?(?:www\.)?bilibili\.com/video/[^\s\'\"<>]+",
+            r"(?:https?://)?m\.bilibili\.com/video/[^\s\'\"<>]+",
+            r"(?:https?://)?(?:b23\.tv|bili2233\.cn)/[^\s\'\"<>]+",
         ]
         for pattern in url_patterns:
-            links.extend(re.findall(pattern, text, re.IGNORECASE))
+            for url in re.findall(pattern, text, re.IGNORECASE):
+                links.append(url if "://" in url else f"https://{url}")
         if include_ids:
             links.extend(re.findall(BILI_BV_PATTERN, text))
             links.extend(re.findall(BILI_AV_PATTERN, text, re.IGNORECASE))
@@ -456,7 +460,7 @@ class BilibiliMixin:
                     return {str(k): str(v) for k, v in data.items()}
             except Exception:
                 pass
-        if ";" in raw and "\n" not in raw and "\t" not in raw:
+        if "=" in raw and "\n" not in raw and "\t" not in raw and not raw.startswith("#"):
             header_cookies = self._parse_cookie_header(raw)
             if header_cookies:
                 return header_cookies
@@ -927,12 +931,14 @@ class BilibiliMixin:
                     str(exc),
                 )
 
-    async def _download_bili_cover(self, cover_url: str, bvid: str) -> Path | None:
+    async def _download_bili_cover(
+        self, cover_url: str, bvid: str, request_id: str
+    ) -> Path | None:
         """下载封面图到缓存目录"""
         if not cover_url:
             return None
         try:
-            cover_path = get_bilibili_card_path() / f"{bvid}_cover.jpg"
+            cover_path = get_bilibili_card_path() / f"{bvid}_{request_id}_cover.jpg"
             await self._download_stream(
                 cover_url,
                 cover_path,
@@ -1019,10 +1025,12 @@ class BilibiliMixin:
         views: int,
         likes: int,
         coins: int,
+        request_id: str,
     ) -> Path | None:
         """渲染B站视频卡片"""
+        cover_path: Path | None = None
         try:
-            cover_path = await self._download_bili_cover(cover_url, bvid)
+            cover_path = await self._download_bili_cover(cover_url, bvid, request_id)
 
             theme = get_theme_for_platform("bilibili")
             renderer = UniversalCardRenderer(theme)
@@ -1043,14 +1051,17 @@ class BilibiliMixin:
 
             # 使用 asyncio.to_thread 避免阻塞事件循环
             card_img = await asyncio.to_thread(renderer.render, data)
-            card_path = get_bilibili_card_path() / f"{bvid}_card.png"
-            await asyncio.to_thread(card_img.save, card_path)
+            card_path = get_bilibili_card_path() / f"{bvid}_{request_id}_card.png"
+            await save_image_file(card_img, card_path)
 
             logger.debug("✅ B站卡片渲染成功: %s", card_path)
             return card_path
         except Exception as exc:
             logger.warning("⚠️ B站卡片渲染失败: %s", str(exc))
             return None
+        finally:
+            if cover_path:
+                await asyncio.to_thread(cover_path.unlink, missing_ok=True)
 
     # endregion
 
@@ -1094,6 +1105,8 @@ class BilibiliMixin:
         else:
             return
 
+        video_paths: list[Path] = []
+        thumbnail_paths: list[Path] = []
         try:
             # region 解析阶段
             parse_start = time.perf_counter()
@@ -1187,8 +1200,6 @@ class BilibiliMixin:
                     event.set_result(event.plain_result(message))
                     return
 
-            video_paths: list[Path] = []
-            thumbnail_paths: list[Path] = []
             intro_text = BilibiliMixin._build_bili_video_intro_text(
                 title, description, video_link
             )
@@ -1334,9 +1345,6 @@ class BilibiliMixin:
                     timing.get("send", 0),
                     total_elapsed,
                 )
-                # 发送完成后立即清理文件（Direct Send Pattern：此时文件已被读取）
-                if video_paths or thumbnail_paths:
-                    await self.cleanup_files(video_paths, thumbnail_paths)
                 return
 
             # 单P视频处理
@@ -1387,7 +1395,10 @@ class BilibiliMixin:
                     views=view_count,
                     likes=likes,
                     coins=coins,
+                    request_id=request_id,
                 )
+                if card_path:
+                    video_paths.append(card_path)
             elif merge_requested:
                 summary_text = self._build_bili_summary(
                     title=title,
@@ -1483,9 +1494,6 @@ class BilibiliMixin:
                     timing.get("send", 0),
                     total_elapsed,
                 )
-                # 发送完成后立即清理文件（Direct Send Pattern：此时文件已被读取）
-                if video_paths or thumbnail_paths:
-                    await self.cleanup_files(video_paths, thumbnail_paths)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -1494,11 +1502,12 @@ class BilibiliMixin:
                     event.set_result(event.plain_result(f"❌ 视频发送失败: {str(exc)}"))
                 elif self.error_notify_mode == "脱敏":
                     event.set_result(event.plain_result("❌ 视频发送失败"))
-                if video_paths or thumbnail_paths:
-                    await self.cleanup_files(video_paths, thumbnail_paths)
         except asyncio.CancelledError:
             logger.info("♻️ B站解析任务已中断%s", source_tag)
             return
+        finally:
+            if video_paths or thumbnail_paths:
+                await self.cleanup_files(video_paths, thumbnail_paths)
 
     # endregion
 

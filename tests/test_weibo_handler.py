@@ -24,6 +24,7 @@ for candidate in Path(__file__).resolve().parents:
         break
 
 from astrbot.api.message_components import Video
+from data.plugins.astrbot_plugin_link_resolver.core.generic import GenericExtractor
 from data.plugins.astrbot_plugin_link_resolver.core.weibo import WeiboResult
 from data.plugins.astrbot_plugin_link_resolver.core.weibo.handler import WeiboMixin
 from data.plugins.astrbot_plugin_link_resolver.main import LinkResolver
@@ -95,6 +96,8 @@ class TestWeiboHandler(unittest.IsolatedAsyncioTestCase):
             ]
         )
         plugin = LinkResolver.__new__(LinkResolver)
+        plugin.generic_extractor = GenericExtractor()
+        plugin.generic_enabled = True
         plugin.bili_enabled = False
         plugin.douyin_enabled = False
         plugin.xhs_enabled = False
@@ -159,7 +162,7 @@ class TestWeiboHandler(unittest.IsolatedAsyncioTestCase):
 
         warning.assert_not_called()
 
-    async def test_process_weibo_merged_video_uses_callback_preparation(self):
+    async def test_process_weibo_merged_summary_sends_video_separately_without_relay(self):
         event = DummyEvent()
         with tempfile.TemporaryDirectory() as tmpdir:
             video_path = Path(tmpdir) / "demo.mp4"
@@ -202,11 +205,12 @@ class TestWeiboHandler(unittest.IsolatedAsyncioTestCase):
                 plugin, event, "https://weibo.com/1234567890/AbCdEfGhI"
             )
 
-        plugin._prepare_component_for_merge_send.assert_awaited_once()
+        plugin._prepare_component_for_merge_send.assert_not_awaited()
         plugin.cleanup_files.assert_awaited_once()
-        self.assertEqual(len(event.sent), 1)
+        self.assertEqual(len(event.sent), 2)
         nodes = event.sent[0].chain[0]
-        self.assertEqual(len(nodes.nodes), 2)
+        self.assertEqual(len(nodes.nodes), 1)
+        self.assertIsInstance(event.sent[1].chain[0], Video)
 
     async def test_process_weibo_non_merged_video_sends_only_video(self):
         event = DummyEvent()

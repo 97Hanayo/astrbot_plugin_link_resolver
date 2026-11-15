@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +23,15 @@ from data.plugins.astrbot_plugin_link_resolver.core.bilibili.handler import (
 
 class TestBilibiliCompatibility(unittest.TestCase):
     """验证 bilibili-api-python 不同响应形态下的兼容逻辑."""
+
+    def test_load_persisted_cookie_header_with_one_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "bili_cookies.txt"
+            path.write_text("SESSDATA=fixture", encoding="utf-8")
+            self.assertEqual(
+                BilibiliMixin()._load_cookies_from_file(path),
+                {"SESSDATA": "fixture"},
+            )
 
     def test_none_current_quality_has_no_lower_quality_candidates(self):
         harness = BilibiliMixin.__new__(BilibiliMixin)

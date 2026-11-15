@@ -1,7 +1,5 @@
 # region 导入
-from random import choice
-
-from msgspec import Struct, field
+from msgspec import Struct
 
 from .video import Image
 
@@ -31,18 +29,30 @@ class SlidesData(Struct):
     @property
     def avatar_url(self) -> str | None:
         return (
-            choice(self.author.avatar_thumb.url_list)
+            self.author.avatar_thumb.url_list[0]
             if self.author.avatar_thumb.url_list
             else None
         )
 
     @property
     def image_urls(self) -> list[str]:
-        return [choice(image.url_list) for image in self.images if image.url_list]
+        return [urls[0] for urls in self.image_url_candidates]
+
+    @property
+    def image_url_candidates(self) -> list[list[str]]:
+        return [
+            list(dict.fromkeys(image.url_list))
+            for image in self.images
+            if image.url_list
+        ]
 
     @property
     def dynamic_urls(self) -> list[str]:
-        return [image.live_video_url for image in self.images if image.live_video_url]
+        return [urls[0] for urls in self.dynamic_url_candidates]
+
+    @property
+    def dynamic_url_candidates(self) -> list[list[str]]:
+        return [urls for image in self.images if (urls := image.live_video_urls)]
 
     @property
     def live_photo_video_urls(self) -> list[str | None]:
@@ -50,7 +60,7 @@ class SlidesData(Struct):
 
 
 class SlidesInfo(Struct):
-    aweme_details: list[SlidesData] = field(default_factory=list)
+    aweme_details: list[SlidesData] | None = None
 
 
 # endregion

@@ -3,19 +3,21 @@
 [![AstrBot Plugin](https://img.shields.io/badge/AstrBot-Plugin-blue?style=flat-square)](https://github.com/AstrBotDevs/AstrBot)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-green?style=flat-square)](LICENSE)
 
-支持监听聊天中的 **B站** / **抖音** / **小红书** / **微博** / **X** / **NGA** 链接，自动解析并发送视频、图集或帖子截图。无需命令，发送链接即可触发。
+支持监听聊天中的 **B站** / **抖音** / **小红书** / **微博** / **X** / **NGA** / **YouTube** 链接，自动解析并发送视频、图集、动图或帖子截图。无需命令，发送链接即可触发。
 
 ---
 
 ## ✨ 特性
 
 - 📺 **B站视频解析**：支持多种画质选择，支持多P视频批量下载
-- 🎵 **抖音解析**：支持视频和图文笔记，自动下载并发送
-- 📕 **小红书原图解析**：支持视频和图文笔记，可下载原图
+- 🎵 **抖音解析**：支持视频、图文和动图，无需配置 Cookie，优先下载最高画质并自动尝试备用地址
+- 📕 **小红书原图解析**：支持视频、图文和 Live Photo，可下载原图并自动尝试备用地址
 - 🚦 **群过滤(黑/白名单)**：按群号控制哪些群启用解析，私聊不受影响
 - 🐦 **微博解析**：支持单条微博正文、图片、视频，默认原图优先
-- 𝕏 **X 解析**：支持 `twitter.com` / `x.com` 推文图片和视频解析
+- 𝕏 **X 解析**：支持 `twitter.com` / `x.com` 推文文字、图片和视频解析
 - 🧵 **NGA 解析**：支持帖子网页截图，并可下载主楼/热点区域的附件图片随消息发送
+- ▶️ **YouTube 视频解析**：基于 yt-dlp 下载可用视频流，支持分辨率、编码和时长限制
+- 🌐 **通用站点(yt-dlp 兜底, 默认关闭)**：支持 TikTok、Instagram、Facebook、AcFun、Reddit 等站点的单个视频链接
 - 🧾 **摘要模式**：B站、抖音和小红书支持文字摘要或渲染卡片
 - 🔤 **字体管理**：支持自定义字体，也可按需安装托管字体
 
@@ -44,7 +46,7 @@ ffmpeg -version
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `enable_platforms` | 勾选要启用解析的平台 | B站, 抖音, 小红书, 微博, X, NGA |
+| `enable_platforms` | 勾选要启用解析的平台 | B站, 抖音, 小红书, 微博, X, NGA, YouTube |
 | `general_settings.retry_count` | 解析失败重试次数（所有平台共用） | 3 |
 | `general_settings.max_video_size_mb` | 最大视频大小限制 (MB)，超过则跳过下载或自动降画质 | 200 |
 | `general_settings.video_relay_umo` | 可选的 QQ 私聊中转 UMO；配置后视频先发送至私聊，再按返回的消息 ID 合并转发。留空时保持当前视频发送方式 | 空 |
@@ -170,6 +172,37 @@ Live 动态上限独立于 `max_media` 图片上限。GIF 随图片合并转发�
 | `nga_settings.cookie_refresh_interval_hours` | Cookie 会话保存最短间隔（小时） | 12 |
 | `nga_settings.cookies` | NGA Cookies 文本，用于登录态页面截图 | 空 |
 
+### 通用站点设置(yt-dlp 兜底)
+
+勾选「通用站点」后生效
+凡是 yt-dlp 有专用提取器认识的链接(TikTok, Instagram, Facebook, AcFun, Reddit, niconico 等上千个站点)都会尝试下载单个点播视频
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `generic_settings.max_height` | 分辨率上限: 原画, 1080P, 720P 或 480P | `720P` |
+| `generic_settings.max_duration_seconds` | 最大视频时长(秒), 超过即忽略; 0 为不限 | `300` |
+| `generic_settings.merge_send` | 合并发送标题, 作者和视频 | 关 |
+| `generic_settings.blocked_domains` | 排除的域名(黑名单), 含子域名 | 空 |
+| `generic_settings.cookies` | 可选. 完整 Netscape `cookies.txt`, 用于 Reddit/西瓜视频/Vimeo 等需登录站点 | 空 |
+
+### YouTube 设置
+
+需要 yt-dlp 2026.8.19 或更新版本.
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `youtube_settings.cookies` | 可选.完整 Netscape `cookies.txt` 文本, 用于需登录内容 | 空 |
+| `youtube_settings.max_height` | 最高下载分辨率: 原画, 8K, 4K, 1080P, 720P, 480P, 360P, 240P 或 144P | `1080P` |
+| `youtube_settings.max_duration_seconds` | 最大视频时长(秒), 超过即忽略 | `300` |
+| `youtube_settings.video_codec` | 优先视频编码: `H.264`(兼容桌面 QQ, 推荐)或 `AV1`(体积通常更小) | `H.264` |
+| `youtube_settings.player_client` | yt-dlp 请求客户端: `default` 或 `web_embedded` | `default` |
+
+媒体流遇到 HTTP 403 时, 插件会回退一次到 `web_embedded`.仍失败时, 请重载插件以更新依赖, 并检查 Cookie 和出口 IP; 该客户端仅适用于可嵌入视频.
+
+### YouTube Cookies(可选)
+
+将浏览器扩展导出的 `.youtube.com` **完整 Netscape `cookies.txt`** 原样粘贴到 `youtube_settings.cookies`.不要粘贴 `SID=...; HSID=...` 这类单行请求头, 也不要手动删减字段.
+
 
 ---
 
@@ -178,7 +211,7 @@ Live 动态上限独立于 `max_media` 图片上限。GIF 随图片合并转发�
 
 - `bilibili.com/video/BV...`、`b23.tv/...`、`bili2233.cn/...`
 - `douyin.com/video/...`、`douyin.com/note/...`、`v.douyin.com/...`
-- `xiaohongshu.com/explore/...`、`xiaohongshu.com/discovery/item/...`、`xhslink.com/...`
+- `xiaohongshu.com/explore/...`、`xiaohongshu.com/discovery/item/...`、`xhslink.com/...`、`xhslink.cn/...`
 - `weibo.com/<uid>/<mblogid>`
 - `m.weibo.cn/detail/<mblogid>`
 - `m.weibo.cn/status/<mblogid>`
@@ -188,10 +221,18 @@ Live 动态上限独立于 `max_media` 图片上限。GIF 随图片合并转发�
 - `bbs.nga.cn/read.php?tid=...`
 - `ngabbs.com/read.php?tid=...`
 - `nga.178.com/read.php?tid=...`
+- `youtube.com/watch?v=<id>`、`youtu.be/<id>`、`youtube.com/shorts/<id>`
+
+抖音动图和小红书 Live Photo 会同时发送静态图片与对应的动态视频。实际消息形式取决于平台内容和消息适配器支持情况。
+
+### 动图与合并转发
+
+抖音动图和小红书 Live Photo 包含图片与视频。解析和下载完成后，媒体发送仍依赖 AstrBot 使用的消息适配器。若日志显示媒体已经下载完成，但消息长时间没有发出，请继续检查适配器的媒体上传日志。
 
 ### X 默认行为
 
-- 纯图片推文：始终合并转发，并带文字摘要
+- 纯文字推文：始终合并转发，先发信息节点，再发完整正文（超长自动分成多个气泡）
+- 纯图片推文：始终合并转发，信息节点和正文节点之后是图片
 - 单视频推文：按 `twitter_settings.merge_send` 决定是否合并转发
 - 多视频或图文混合推文：始终合并转发，避免非合并模式下丢媒体
 - 当前不提供代理配置
@@ -212,6 +253,7 @@ astrbot_plugin_link_resolver/
 │   ├── weibo/           # 微博解析
 │   ├── xiaohongshu/     # 小红书解析
 │   ├── nga/             # NGA解析
+│   ├── youtube/         # YouTube 解析
 │   └── common/          # 公共工具
 └── tests/               # 测试
 
@@ -345,8 +387,10 @@ OpenMoji-black-glyf.ttf
 ## 🙏 致谢
 
 - [astrbot_plugin_parser](https://github.com/Zhalslar/astrbot_plugin_parser)
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — YouTube 视频信息提取与下载
 - [XHS-Downloader](https://github.com/JoeanAmier/XHS-Downloader) — 小红书图片下载参考实现
-- [Johnserf-Seed/f2](https://github.com/Johnserf-Seed/f2) — 微博详情接口与访客 Cookie 参考实现
+- [Johnserf-Seed/f2](https://github.com/Johnserf-Seed/f2) — 抖音游客请求签名、微博详情接口与访客 Cookie 参考实现
+- [Douyin_TikTok_Download_API](https://github.com/Evil0ctal/Douyin_TikTok_Download_API) - 抖音 WebSign 参考实现
 - [dataabc/weibo-crawler](https://github.com/dataabc/weibo-crawler) — 微博原图/视频字段与公开抓取思路参考
 
 ---

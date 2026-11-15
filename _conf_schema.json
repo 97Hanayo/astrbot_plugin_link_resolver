@@ -1,7 +1,7 @@
 {
     "enable_platforms": {
         "description": "启用的平台",
-        "hint": "勾选要启用解析的平台。",
+        "hint": "勾选要启用解析的平台。「通用站点」默认不勾选: 凡是 yt-dlp 有专用提取器认识的链接(TikTok/Instagram/Facebook 等上千个站点)都会尝试下载视频。",
         "type": "list",
         "options": [
             "B站",
@@ -9,7 +9,9 @@
             "小红书",
             "微博",
             "X",
-            "NGA"
+            "NGA",
+            "YouTube",
+            "通用站点"
         ],
         "default": [
             "B站",
@@ -17,7 +19,8 @@
             "小红书",
             "微博",
             "X",
-            "NGA"
+            "NGA",
+            "YouTube"
         ]
     },
     "bili_settings": {
@@ -322,6 +325,113 @@
                 "type": "string",
                 "hint": "可选。支持 Get cookies.txt LOCALLY 的 cookies.txt 内容或 k=v;... Cookie 字符串；填写后会自动保存到 cookies/nga_cookies.txt，也可手动导出到该路径。ngabbs.com/nga.cn/nga.178.com 域名会自动共用。",
                 "default": ""
+            }
+        }
+    },
+    "youtube_settings": {
+        "description": "YouTube 设置",
+        "type": "object",
+        "items": {
+            "max_height": {
+                "description": "最高下载分辨率",
+                "type": "string",
+                "hint": "下载高度上限; 优先最高可用画质, 不重新编码.原画不设上限, 仍受大小限制.",
+                "default": "1080P",
+                "options": [
+                    "原画 (最高画质)",
+                    "8K",
+                    "4K",
+                    "1080P",
+                    "720P",
+                    "480P",
+                    "360P",
+                    "240P",
+                    "144P"
+                ]
+            },
+            "max_duration_seconds": {
+                "description": "最大视频时长(秒)",
+                "type": "int",
+                "hint": "超过此时长不下载; 0 为不限.",
+                "default": 300,
+                "min": 0,
+                "max": 86400
+            },
+            "video_codec": {
+                "description": "优先视频编码",
+                "type": "string",
+                "hint": "H.264 兼容性更好; AV1 通常更小.无匹配 MP4 流时自动回退.",
+                "default": "H.264",
+                "options": [
+                    "H.264",
+                    "AV1"
+                ]
+            },
+            "merge_send": {
+                "description": "YouTube 合并发送",
+                "type": "bool",
+                "hint": "合并发送标题、作者和视频; 关闭则只发视频.",
+                "default": false
+            },
+            "cookies": {
+                "description": "YouTube Cookies",
+                "type": "string",
+                "hint": "可选.粘贴完整 Netscape cookies.txt; 不要粘贴 k=v;... 请求头.",
+                "default": ""
+            },
+            "player_client": {
+                "description": "YouTube 请求客户端",
+                "type": "string",
+                "hint": "默认自动选择; 403 时回退 web_embedded(仅限可嵌入视频).",
+                "default": "default",
+                "options": [
+                    "default",
+                    "web_embedded"
+                ]
+            }
+        }
+    },
+    "generic_settings": {
+        "description": "通用站点设置(yt-dlp)",
+        "type": "object",
+        "items": {
+            "max_height": {
+                "description": "最高下载分辨率",
+                "type": "string",
+                "hint": "通用站点下载高度上限; 原画不设上限, 仍受大小限制.",
+                "default": "720P",
+                "options": [
+                    "原画 (最高画质)",
+                    "1080P",
+                    "720P",
+                    "480P"
+                ]
+            },
+            "max_duration_seconds": {
+                "description": "最大视频时长(秒)",
+                "type": "int",
+                "hint": "超过此时长不下载; 0 为不限.",
+                "default": 300,
+                "min": 0,
+                "max": 86400
+            },
+            "merge_send": {
+                "description": "通用站点合并发送",
+                "type": "bool",
+                "hint": "合并发送标题、作者和视频; 关闭则只发视频.",
+                "default": false
+            },
+            "cookies": {
+                "description": "通用站点 Cookies",
+                "type": "string",
+                "hint": "可选. 粘贴完整 Netscape cookies.txt(可包含多个站点的 cookie, yt-dlp 只会发送域名匹配的部分), 用于 Reddit/西瓜视频/Vimeo 等需要登录的站点. 不要粘贴 k=v;... 请求头.",
+                "default": ""
+            },
+            "blocked_domains": {
+                "description": "排除的域名(黑名单)",
+                "type": "list",
+                "hint": "这些域名及其子域名不会被通用解析处理, 每行一个域名. 默认为空. 已有专用解析器的平台(B站/抖音/小红书/微博/X/YouTube)始终被排除.",
+                "default": []
             }
         }
     },

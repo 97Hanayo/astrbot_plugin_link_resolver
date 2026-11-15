@@ -4,7 +4,7 @@
 1. 从文本中识别 twitter.com / x.com 状态链接并按 tweet id 去重。
 2. 调用 fxtwitter API 获取推文正文、作者、发布时间和媒体信息。
 3. 将返回结构映射为插件内部统一结果，保留图片和视频直链列表。
-4. 仅处理包含可下载图片或视频的推文，纯文本推文直接报错跳过。
+4. 媒体字段是可选的：纯文字推文同样返回结果，图片和视频列表为空，由 handler 决定如何发送。
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ TWITTER_DOWNLOAD_HEADERS = {
 
 TWITTER_STATUS_PATTERN = (
     r"(?:https?://)?(?:www\.)?(?:twitter\.com|x\.com)/"
-    r"(?:[A-Za-z0-9_]{1,32}|i/web)/status/(?P<tid>\d+)"
+    r"(?:(?:[A-Za-z0-9_]{1,32}|i/web)/status|statuses)/(?P<tid>\d+)"
 )
 TWITTER_MESSAGE_PATTERN = rf"(?s).*(?:{TWITTER_STATUS_PATTERN})"
 
@@ -63,6 +63,10 @@ class TwitterResult:
     video_urls: list[str]
     source_url: str
     tweet_id: str | None = None
+
+    @property
+    def has_media(self) -> bool:
+        return bool(self.image_urls or self.video_urls)
 
 
 class TwitterParseError(RuntimeError):
@@ -222,10 +226,7 @@ class TwitterExtractor:
         url = _normalize_url(text_or_url)
         tweet_id = self._extract_tweet_id(url)
         payload = await self._fetch_status_json(tweet_id)
-        result = self._build_result(payload, url)
-        if not result.image_urls and not result.video_urls:
-            raise TwitterParseError("推文中未找到可下载媒体")
-        return result
+        return self._build_result(payload, url)
 
     def _extract_tweet_id(self, url: str) -> str:
         if match := _STATUS_RE.search(url):
@@ -324,6 +325,21 @@ class TwitterExtractor:
             if url and media_type in {"video", "gif"} and url not in seen_videos:
                 seen_videos.add(url)
                 video_urls.append(url)
+
+        article = tweet.get("article")
+        if isinstance(article, dict):
+            article_media = [article.get("cover_media")]
+            article_media.extend(article.get("media_entities") or [])
+            for item in article_media:
+                if not isinstance(item, dict):
+                    continue
+                media_info = item.get("media_info")
+                if not isinstance(media_info, dict):
+                    continue
+                url = str(media_info.get("original_img_url") or "").strip()
+                if url and url not in seen_images:
+                    seen_images.add(url)
+                    image_urls.append(url)
 
         return TwitterResult(
             text=text,

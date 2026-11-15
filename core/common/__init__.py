@@ -19,6 +19,7 @@ __all__ = [
     "get_weibo_cookies_file",
     "get_douyin_cookies_file",
     "get_twitter_cookies_file",
+    "get_youtube_cookies_file",
     "get_bilibili_video_path",
     "get_bilibili_thumb_path",
     "get_bilibili_card_path",
@@ -35,6 +36,9 @@ __all__ = [
     "get_weibo_image_path",
     "get_twitter_video_path",
     "get_twitter_image_path",
+    "get_youtube_video_path",
+    "get_generic_video_path",
+    "get_generic_cookies_file",
 ]
 
 from .exceptions import SizeLimitExceeded
@@ -49,6 +53,7 @@ from .cookies import (
 from .paths import (
     PLUGIN_NAME,
     get_bili_cookies_file,
+    get_youtube_cookies_file,
     get_bilibili_card_path,
     get_bilibili_thumb_path,
     get_bilibili_video_path,
@@ -65,10 +70,13 @@ from .paths import (
     get_nga_cookies_file,
     get_nga_image_path,
     get_nga_screenshot_path,
+    get_generic_cookies_file,
+    get_generic_video_path,
     get_twitter_image_path,
     get_twitter_video_path,
     get_weibo_cookies_file,
     get_weibo_image_path,
+    get_youtube_video_path,
     get_weibo_video_path,
     get_xhs_card_path,
     get_xhs_comment_path,
