@@ -28,6 +28,7 @@ from data.plugins.astrbot_plugin_link_resolver.core.generic import GenericExtrac
 from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu import (
     XiaohongshuExtractor,
     XiaohongshuResult,
+    extract_xhs_links,
 )
 from data.plugins.astrbot_plugin_link_resolver.core.xiaohongshu.comments import (
     COMMENT_MODE_DRAW,
@@ -48,6 +49,29 @@ from data.plugins.astrbot_plugin_link_resolver.main import LinkResolver
 class DummyEvent:
     def chain_result(self, chain):
         return chain
+
+
+class TestXhsShareLinks(unittest.IsolatedAsyncioTestCase):
+    def test_markdown_target_keeps_share_token_and_deduplicates_link(self):
+        url = (
+            "https://www.xiaohongshu.com/discovery/item/6afab529000000002a018b1e"
+            "?app_platform=android&xsec_token=test%3D&xsec_source=app_share"
+        )
+        escaped = url.replace("&", r"\&")
+        self.assertEqual(extract_xhs_links(f"[分享链接]({escaped})"), [url])
+        self.assertEqual(extract_xhs_links(f"[**{url}**]({escaped})"), [url])
+
+    async def test_parse_accepts_escaped_share_url_directly(self):
+        parser = XiaohongshuExtractor()
+        parser._parse_explore = AsyncMock(return_value=object())
+        note_id = "6afab529000000002a018b1e"
+        url = f"https://www.xiaohongshu.com/discovery/item/{note_id}"
+        await parser.parse(url + r"?app_platform=android\&xsec_token=test%3D")
+        parser._parse_explore.assert_awaited_once_with(
+            f"https://www.xiaohongshu.com/explore/{note_id}"
+            "?app_platform=android&xsec_token=test%3D",
+            note_id,
+        )
 
 
 class TestXhsCommentCookies(unittest.TestCase):

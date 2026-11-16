@@ -95,6 +95,7 @@ _LONG_RE = re.compile(
 
 def extract_xhs_links(text: str) -> list[str]:
     """从文本中提取所有小红书链接"""
+    text = text.replace(r"\&", "&")
     links = []
     # 短链接
     for match in _SHORT_RE.finditer(text):
@@ -351,7 +352,7 @@ class XiaohongshuExtractor:
     async def parse(self, text_or_url: str) -> XiaohongshuResult:
         """解析小红书链接"""
         await self._refresh_user_cookies()
-        url = text_or_url.strip()
+        url = text_or_url.strip().replace(r"\&", "&")
         if not url.startswith("http"):
             url = "https://" + url
 
