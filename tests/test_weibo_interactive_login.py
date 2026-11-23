@@ -539,21 +539,27 @@ class TestWeiboInteractiveLogin(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/weibo_login_scan", sent_messages[0][1][0].text)
         self.assertIn("/weibo_login_code", sent_messages[0][1][0].text)
 
-    async def test_is_user_cookie_valid_checks_weibo_config_login_flag(self):
+    async def test_is_user_cookie_valid_checks_weibo_verify_endpoint(self):
         import httpx
 
         extractor = WeiboExtractor()
         self.assertFalse(await extractor.is_user_cookie_valid())
 
         extractor.set_cookie("SUB=valid-sub")
-        valid_resp = httpx.Response(200, json={"ok": 1, "data": {"login": True, "uid": "123"}})
-        invalid_resp = httpx.Response(200, json={"ok": 1, "data": {"login": False}})
-        unauth_resp = httpx.Response(403, text="Forbidden")
+        valid_no_login_key = httpx.Response(200, json={"ok": 1, "statuses": []})
+        valid_with_login_flag = httpx.Response(200, json={"ok": 1, "data": {"login": True}})
+        expired_ok_neg100 = httpx.Response(
+            200, json={"ok": -100, "url": "https://weibo.com/login.php"}
+        )
+        explicit_not_logged_in = httpx.Response(200, json={"ok": 1, "data": {"login": False}})
+        visitor_forbidden = httpx.Response(403, json={"ok": 0, "message": "请登录后使用"})
 
         for resp, expected in (
-            (valid_resp, True),
-            (invalid_resp, False),
-            (unauth_resp, False),
+            (valid_no_login_key, True),
+            (valid_with_login_flag, True),
+            (expired_ok_neg100, False),
+            (explicit_not_logged_in, False),
+            (visitor_forbidden, False),
         ):
             mock_client = AsyncMock()
             mock_client.__aenter__.return_value = mock_client

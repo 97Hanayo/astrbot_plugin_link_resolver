@@ -45,6 +45,8 @@ WEIBO_VISITOR_FORM = {
 WEIBO_BROWSER_REFRESH_URLS = ("https://weibo.com/",)
 # Same heartbeat endpoint used by the desktop site's official frontend.
 WEIBO_COOKIE_REFRESH_URL = "https://weibo.com/ajax/config/get_config"
+# Login-required desktop endpoint: returns ok=1 when logged in, ok=-100/403 for expired or visitor cookies.
+WEIBO_COOKIE_VERIFY_URL = "https://weibo.com/ajax/feed/unreadfriendstimeline?refresh=4"
 WEIBO_LOGIN_COOKIE_NAMES = ("SUB", "SUBP", "WBPSESS")
 WEIBO_COOKIE_REFRESH_INTERVAL_SEC = 12 * 60 * 60
 WEIBO_BASE_HEADERS = {
@@ -312,28 +314,42 @@ class WeiboExtractor:
         """Check whether the currently loaded user cookies are logged in and valid."""
         if not self._user_cookies or not self._user_cookies.get("SUB"):
             return False
+        cookie_header = self._serialize_cookie_header(self._user_cookies)
         try:
             async with httpx.AsyncClient(
                 timeout=self.timeout, headers=WEIBO_API_HEADERS, follow_redirects=False
             ) as client:
                 response = await client.get(
-                    WEIBO_COOKIE_REFRESH_URL,
-                    headers={"Cookie": self._serialize_cookie_header(self._user_cookies)},
+                    WEIBO_COOKIE_VERIFY_URL,
+                    headers={"Cookie": cookie_header},
                 )
+                if response.status_code == 404:
+                    response = await client.get(
+                        WEIBO_COOKIE_REFRESH_URL,
+                        headers={"Cookie": cookie_header},
+                    )
             if response.status_code != 200:
+                logger.debug(
+                    "🐦 微博 Cookie 有效性检查未通过: status=%s", response.status_code
+                )
                 return False
             payload = response.json()
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            logger.debug("🐦 微博 Cookie 有效性检查异常: %s", type(exc).__name__)
             return False
 
         if not isinstance(payload, dict) or payload.get("ok") != 1:
+            logger.debug(
+                "🐦 微博 Cookie 有效性检查未通过: ok=%s",
+                payload.get("ok") if isinstance(payload, dict) else None,
+            )
             return False
         data = payload.get("data")
-        if not isinstance(data, dict):
+        if isinstance(data, dict) and "login" in data and data["login"] is not True:
             return False
-        return data.get("login") is True
+        return True
 
     async def resolve_short_url(self, url: str) -> str:
         url = _normalize_url(url)
