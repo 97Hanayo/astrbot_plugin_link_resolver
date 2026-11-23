@@ -10,6 +10,14 @@ from .extractor import (
     WeiboRetryableError,
     extract_weibo_links,
 )
+from .interactive_login import (
+    WeiboInteractiveLoginError,
+    WeiboInteractiveLoginManager,
+    WeiboLoginCancelledError,
+    WeiboLoginCaptchaBlockedError,
+    WeiboLoginResult,
+    WeiboLoginTimeoutError,
+)
 
 __all__ = [
     "WEIBO_DOWNLOAD_HEADERS",
@@ -17,6 +25,12 @@ __all__ = [
     "WEIBO_REQUEST_TIMEOUT_SEC",
     "WeiboAuthError",
     "WeiboExtractor",
+    "WeiboInteractiveLoginError",
+    "WeiboInteractiveLoginManager",
+    "WeiboLoginCancelledError",
+    "WeiboLoginCaptchaBlockedError",
+    "WeiboLoginResult",
+    "WeiboLoginTimeoutError",
     "WeiboParseError",
     "WeiboResult",
     "WeiboRetryableError",

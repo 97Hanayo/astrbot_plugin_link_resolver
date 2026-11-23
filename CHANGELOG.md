@@ -23,6 +23,7 @@
 
 ### 新增
 
+- 微博新增 Cookie 过期管理员提醒（`weibo_settings.cookie_notification_target`）及 Playwright 交互重登指令：`/weibo_login_scan`（扫码登录）、`/weibo_login_code`（后台账号密码+验证码登录）、`/weibo_code` 与 `/weibo_login_cancel`；登录完成后以完整 Netscape 格式保存 `weibo.com` 与 `login.sina.com.cn`（含 `tgc`）Cookie 及浏览器状态，供 `astrbot_plugin_weibo_monitor` 共用；当前 Cookie 仍有效时执行登录指令会直接提示无需登录。
 - 抖音新增 Live 图支持，修复图集接口缺少动态视频的问题；可额外发送 GIF 或 H.264/AAC MP4，始终保留静态图，默认关闭转换、每篇最多附加 1 段动态（`0` 为不限）。
 - 通用设置新增 QQ 私聊视频中转 UMO。配置后先上传视频并使用该次发送返回的消息 ID 合并转发，按消息 ID 关联并发解析；未配置或中转发送失败时继续单独发送视频。
 - 微博新增 Live 图转换配置，可额外发送 GIF 或统一转码后的 MP4，并始终保留静态原图。

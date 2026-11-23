@@ -36,6 +36,7 @@ async def collect_browser_cookies(
     on_navigation: Callable[[str], None] | None = None,
     scoped_cookies: Sequence[Mapping[str, Any]] | None = None,
     on_cookie_state: Callable[[list[dict[str, Any]], bool], None] | None = None,
+    collect_all_cookies: bool = False,
 ) -> list[dict[str, Any]]:
     """Load cookies in Chromium and return the final same-site Cookie jar.
 
@@ -51,22 +52,46 @@ async def collect_browser_cookies(
         selected = {name: values.get(name, "") for name in session_cookie_names}
         return hashlib.sha256(json.dumps(selected, sort_keys=True).encode()).hexdigest()
 
+    def sso_digest_for(items: Sequence[Mapping[str, Any]]) -> str | None:
+        normalized_primary = (cookie_domain or "").strip().lower().lstrip(".")
+        sso_items = [
+            {
+                k: (int(float(c[k])) if k == "expires" else c[k])
+                for k in ("name", "value", "domain", "path", "secure", "httpOnly", "expires")
+                if k in c and (k != "expires" or float(c[k]) > 0)
+            }
+            for c in items
+            if str(c.get("domain") or "").strip().lower().lstrip(".") != normalized_primary
+        ]
+        if not sso_items:
+            return None
+        return hashlib.sha256(json.dumps(sso_items, sort_keys=True).encode()).hexdigest()
+
     input_digest = fingerprint(cookies)
     source_digest = (
         hashlib.sha256(json.dumps(list(scoped_cookies), sort_keys=True).encode()).hexdigest()
         if scoped_cookies else None
     )
+    input_sso_digest = sso_digest_for(scoped_cookies) if scoped_cookies else None
     saved_state = None
     if state_path is not None:
         try:
             saved = json.loads(state_path.read_text(encoding="utf-8"))
             if input_digest in (saved.get("input_digest"), saved.get("output_digest")):
                 candidate_state = saved.get("storage_state")
+                saved_source_digests = {
+                    value
+                    for value in (saved.get("source_digest"), saved.get("output_source_digest"))
+                    if value
+                }
                 # A new SSO export must replace stale saved state even when
                 # the desktop login fields happen to be unchanged.
-                if isinstance(candidate_state, dict) and (
-                    not scoped_cookies or saved.get("source_digest") == source_digest
-                ):
+                source_matches = (
+                    not scoped_cookies
+                    or (source_digest is not None and source_digest in saved_source_digests)
+                    or (input_sso_digest is not None and input_sso_digest in saved_source_digests)
+                )
+                if isinstance(candidate_state, dict) and source_matches:
                     saved_state = candidate_state
         except (OSError, ValueError, AttributeError):
             pass
@@ -160,8 +185,9 @@ async def collect_browser_cookies(
                     raise BrowserCookieRefreshError("No browser keepalive page loaded")
                 allowed = tuple(allowed_domains)
                 collected = (
-                    await context.cookies(list(refresh_urls))
-                    if return_url_pattern is not None else await context.cookies()
+                    await context.cookies()
+                    if collect_all_cookies or return_url_pattern is None
+                    else await context.cookies(list(refresh_urls))
                 )
                 browser_cookies = [
                     cookie
@@ -180,12 +206,16 @@ async def collect_browser_cookies(
                         raise BrowserCookieRefreshError("Browser keepalive removed login cookies")
                     # Preserve scoped cookies and local storage, including SSO
                     # state from redirects. Never flatten that state into headers.
-                    atomic_write_cookie_text(state_path, json.dumps({
+                    state_payload = {
                         "input_digest": input_digest,
                         "output_digest": fingerprint(effective),
                         "source_digest": source_digest,
                         "storage_state": await context.storage_state(),
-                    }))
+                    }
+                    output_sso_digest = sso_digest_for(browser_cookies)
+                    if output_sso_digest is not None:
+                        state_payload["output_source_digest"] = output_sso_digest
+                    atomic_write_cookie_text(state_path, json.dumps(state_payload))
                 return browser_cookies
             finally:
                 await context.close()
@@ -193,4 +223,4 @@ async def collect_browser_cookies(
             await browser.close()
 
 
-__all__ = ["collect_browser_cookies"]
+__all__ = ["BrowserCookieRefreshError", "collect_browser_cookies"]

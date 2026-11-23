@@ -127,7 +127,16 @@ Live 动态上限独立于 `max_media` 图片上限。GIF 随图片合并转发�
 | `weibo_settings.download_original` | 原图优先下载并自动回退 | ✅ 开启 |
 | `weibo_settings.auto_refresh_cookies` | 定期用 Playwright 刷新微博浏览器 Cookie | ✅ 开启 |
 | `weibo_settings.cookie_refresh_interval_hours` | Cookie 保活请求最短间隔（小时） | 12 |
-| `weibo_settings.cookies` | 微博 Cookie 文本，留空时读取文件 | 空 |
+| `weibo_settings.cookie_notification_target` | 微博 Cookie 过期无法自动保活时提醒的管理员会话 UMO（多个用逗号或换行分隔） | 空 |
+| `weibo_settings.login_account` | 微博登录账号（手机号/邮箱），供 `/weibo_login_code` 使用 | 空 |
+| `weibo_settings.login_password` | 微博登录密码，供 `/weibo_login_code` 使用 | 空 |
+| `weibo_settings.cookies` | 微博 Cookie 文本，留空时读取文件；自动保活与交互登录会保存完整 Netscape 格式供 `astrbot_plugin_weibo_monitor` 共用 | 空 |
+
+微博 Cookie 过期提醒与交互登录命令（仅 AstrBot 全局管理员可用）：
+- `/weibo_login_scan`：启动 Playwright 获取微博登录二维码发给管理员，扫码完成后自动保存 `weibo.com` 与 `login.sina.com.cn`（含 `tgc`）完整 Cookie；若当前 Cookie 仍有效则提示无需登录。
+- `/weibo_login_code`：使用后台配置的微博账号密码启动 Playwright 验证码登录并等待管理员回复验证码（可直接回复数字验证码或发送 `/weibo_code 验证码`）；若当前 Cookie 仍有效则提示无需登录。
+- `/weibo_code <验证码>`：向等待中的微博验证码登录会话提交验证码。
+- `/weibo_login_cancel`：取消进行中的微博交互登录任务。
 
 ### 小红书设置
 

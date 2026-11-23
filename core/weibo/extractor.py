@@ -11,9 +11,11 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 import time
+from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass, field
 from html import unescape
 from http.cookies import SimpleCookie
@@ -27,6 +29,11 @@ from astrbot.api import logger
 
 from ..common.playwright_cookies import BrowserCookieRefreshError, collect_browser_cookies
 from ..common.cookies import atomic_write_cookie_text, host_matches, parse_set_cookie_updates
+from .cookie_storage import (
+    filter_weibo_browser_cookies,
+    save_browser_storage_state,
+    update_cookie_source,
+)
 
 WEIBO_REQUEST_TIMEOUT_SEC = 20.0
 WEIBO_VISITOR_URL = "https://passport.weibo.com/visitor/genvisitor2"
@@ -151,6 +158,7 @@ class WeiboExtractor:
         self._visitor_cookies: dict[str, str] | None = None
         self._cookie_storage_path: Path | None = None
         self._cookie_update_callback: Callable[[str], None] | None = None
+        self._cookie_expired_callback: Callable[[str], Awaitable[None] | None] | None = None
         self._auto_refresh_cookies = True
         self._cookie_refresh_interval_sec = WEIBO_COOKIE_REFRESH_INTERVAL_SEC
         self._last_cookie_refresh_at = 0.0
@@ -201,6 +209,84 @@ class WeiboExtractor:
         self._cookie_storage_path = Path(path) if path else None
         self._cookie_update_callback = on_update
 
+    def set_cookie_expired_callback(
+        self,
+        callback: Callable[[str], Awaitable[None] | None] | None,
+    ) -> None:
+        """Configure callback notified when user cookies expire or fail recovery."""
+        self._cookie_expired_callback = callback
+
+    async def _notify_cookie_expired(self, reason: str) -> None:
+        callback = self._cookie_expired_callback
+        if callback is None:
+            return
+        try:
+            result = callback(reason)
+            if inspect.isawaitable(result):
+                await result
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("⚠️ 微博 Cookie 过期通知回调异常（%s）: %s", type(exc).__name__, exc)
+
+    async def apply_interactive_login_result(
+        self,
+        browser_cookies: Sequence[Mapping[str, Any]],
+        storage_state: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Persist cookies collected from interactive Playwright login (weibo.com + login.sina.com.cn)."""
+        scoped = filter_weibo_browser_cookies(browser_cookies)
+        if not scoped:
+            raise WeiboAuthError("交互登录未获取到有效的微博/新浪 Cookie")
+        desktop = self._browser_cookie_candidate(scoped, {})
+        if not desktop.get("SUB"):
+            raise WeiboAuthError("交互登录结果缺少微博登录凭据 SUB")
+
+        serialized_source = update_cookie_source(
+            [], desktop, browser_cookies=scoped, force_netscape=True
+        )
+        async with self._cookie_refresh_lock:
+            self._user_cookies = dict(desktop)
+            self.cookie = serialized_source
+            self._browser_seed_cookies = self._parse_browser_cookie_source(serialized_source)
+            self._cookie_generation += 1
+            self._visitor_cookies = None
+            self._last_cookie_refresh_at = time.monotonic()
+
+            if self._cookie_storage_path is not None and storage_state is not None:
+                try:
+                    save_browser_storage_state(
+                        self._cookie_storage_path.with_suffix(".browser.json"),
+                        desktop_cookies=desktop,
+                        browser_cookies=scoped,
+                        storage_state=storage_state,
+                        session_cookie_names=WEIBO_LOGIN_COOKIE_NAMES,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "⚠️ 保存微博交互登录浏览器会话状态失败（%s）", type(exc).__name__
+                    )
+            saved = self._persist_user_cookies()
+
+        sina_names = sorted(
+            {
+                str(cookie.get("name") or "")
+                for cookie in scoped
+                if str(cookie.get("domain") or "").lstrip(".")
+                in {"sina.com.cn", "login.sina.com.cn"}
+                and cookie.get("value")
+            }
+        )
+        return {
+            "saved": saved,
+            "total_cookies": len(scoped),
+            "desktop_login_fields": [
+                name for name in WEIBO_LOGIN_COOKIE_NAMES if desktop.get(name)
+            ],
+            "sina_cookie_names": sina_names,
+            "has_tgc": "tgc" in sina_names,
+        }
+
     def configure_cookie_refresh(
         self,
         enabled: bool = True,
@@ -221,6 +307,33 @@ class WeiboExtractor:
 
     def has_user_cookie(self) -> bool:
         return bool(self._user_cookies)
+
+    async def is_user_cookie_valid(self) -> bool:
+        """Check whether the currently loaded user cookies are logged in and valid."""
+        if not self._user_cookies or not self._user_cookies.get("SUB"):
+            return False
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout, headers=WEIBO_API_HEADERS, follow_redirects=False
+            ) as client:
+                response = await client.get(
+                    WEIBO_COOKIE_REFRESH_URL,
+                    headers={"Cookie": self._serialize_cookie_header(self._user_cookies)},
+                )
+            if response.status_code != 200:
+                return False
+            payload = response.json()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return False
+
+        if not isinstance(payload, dict) or payload.get("ok") != 1:
+            return False
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            return False
+        return data.get("login") is True
 
     async def resolve_short_url(self, url: str) -> str:
         url = _normalize_url(url)
@@ -335,6 +448,7 @@ class WeiboExtractor:
             except WeiboAuthError as exc:
                 errors.append(str(exc))
                 if self.has_user_cookie():
+                    await self._notify_cookie_expired(str(exc))
                     break
                 self._visitor_cookies = None
             except WeiboRetryableError as exc:
@@ -407,11 +521,12 @@ class WeiboExtractor:
                 "有" if original.get("SRF") else "无",
                 ",".join(name for name in WEIBO_LOGIN_COOKIE_NAMES if original.get(name)) or "无",
             )
+            browser_cookies: list[dict[str, Any]] | None = None
             try:
                 browser_cookies = await collect_browser_cookies(
                     cookies=original,
                     refresh_urls=WEIBO_BROWSER_REFRESH_URLS,
-                    allowed_domains=("weibo.com",),
+                    allowed_domains=("weibo.com", "sina.com.cn"),
                     cookie_domain=".weibo.com",
                     user_agent=WEIBO_BASE_HEADERS["User-Agent"],
                     timeout_ms=int(self.timeout * 1000),
@@ -422,12 +537,14 @@ class WeiboExtractor:
                     on_navigation=self._log_cookie_navigation,
                     scoped_cookies=self._browser_seed_cookies or None,
                     on_cookie_state=self._log_browser_cookie_state,
+                    collect_all_cookies=True,
                 )
             except BrowserCookieRefreshError as exc:
                 raise WeiboAuthError(
                     "浏览器未完成微博首页恢复或未保留登录凭据，保留原值；"
-                    "若微博 Cookie 无法恢复，请导入包含 weibo.com 和 login.sina.com.cn 的 "
-                    "Netscape Cookie 文件，保留 .login.sina.com.cn 的 tgc 等专属字段与域名信息"
+                    "若微博 Cookie 无法恢复，请使用 /weibo_login_scan 扫码登录、"
+                    "/weibo_login_code 验证码登录，或导入包含 weibo.com 和 login.sina.com.cn 的 "
+                    "Netscape Cookie 文件"
                 ) from exc
             except Exception as exc:
                 logger.info(
@@ -435,6 +552,7 @@ class WeiboExtractor:
                     type(exc).__name__,
                 )
                 refreshed = await self._refresh_cookie_candidate(original)
+                browser_cookies = None
             else:
                 if not browser_cookies:
                     raise WeiboAuthError("浏览器保活没有返回 Cookie，保留原值")
@@ -443,7 +561,9 @@ class WeiboExtractor:
                     "已保存" if self._cookie_storage_path else "未配置持久化路径",
                 )
                 refreshed = self._browser_cookie_candidate(browser_cookies, original)
-            self._commit_cookie_candidate(original, refreshed, generation)
+            self._commit_cookie_candidate(
+                original, refreshed, generation, browser_cookies=browser_cookies
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -452,6 +572,8 @@ class WeiboExtractor:
                 type(exc).__name__,
                 exc if isinstance(exc, WeiboAuthError) else "请求或浏览器异常",
             )
+            if isinstance(exc, WeiboAuthError):
+                await self._notify_cookie_expired(str(exc))
 
     async def _refresh_cookie_candidate(
         self, cookies: dict[str, str]
@@ -562,7 +684,12 @@ class WeiboExtractor:
         return candidate
 
     def _commit_cookie_candidate(
-        self, original: dict[str, str], candidate: dict[str, str], generation: int
+        self,
+        original: dict[str, str],
+        candidate: dict[str, str],
+        generation: int,
+        *,
+        browser_cookies: Sequence[Mapping[str, Any]] | None = None,
     ) -> None:
         if generation != self._cookie_generation or original != self._user_cookies:
             logger.info("🐦 微博 Cookie 已被更换，忽略旧请求更新")
@@ -571,16 +698,24 @@ class WeiboExtractor:
             name for name in original.keys() | candidate.keys()
             if original.get(name) != candidate.get(name)
         )
-        if not changed:
+        updated_source = update_cookie_source(
+            self._browser_seed_cookies,
+            candidate,
+            browser_cookies=browser_cookies,
+        )
+        updated_seeds = self._parse_browser_cookie_source(updated_source)
+        sso_changed = updated_seeds != self._browser_seed_cookies
+        if not changed and not sso_changed:
             logger.info("🐦 微博保活请求完成，Cookie 字段值未改变；不能据此确认凭据续期")
             return
         self._user_cookies = dict(candidate)
-        self.cookie = self._serialize_cookie_header(candidate)
+        self.cookie = updated_source
+        self._browser_seed_cookies = updated_seeds
         self._cookie_generation += 1
         if self._persist_user_cookies():
             logger.info(
                 "🐦 微博已保存服务端下发的 Cookie 更新，更新字段: %s",
-                ", ".join(changed),
+                ", ".join(changed) or "跨域 SSO 状态",
             )
 
     @staticmethod

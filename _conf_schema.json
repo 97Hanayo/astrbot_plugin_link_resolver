@@ -240,10 +240,28 @@
                 "min": 1,
                 "max": 168
             },
+            "cookie_notification_target": {
+                "description": "Cookie过期提醒管理员会话UMO",
+                "type": "string",
+                "hint": "可选。填写完整会话 UMO（例如 aiocqhttp:FriendMessage:123456，多个可用逗号或换行分隔）。当微博 Cookie 过期且无法自动保活时，向该会话发送提醒，提示使用 /weibo_login_scan 扫码登录或 /weibo_login_code 验证码登录。",
+                "default": ""
+            },
+            "login_account": {
+                "description": "微博登录账号(手机号/邮箱)",
+                "type": "string",
+                "hint": "可选。供管理员使用 /weibo_login_code 触发 Playwright 验证码登录时自动填入。",
+                "default": ""
+            },
+            "login_password": {
+                "description": "微博登录密码",
+                "type": "string",
+                "hint": "可选。供管理员使用 /weibo_login_code 触发 Playwright 账密/验证码登录时自动填入。若担心明文存储或触发滑块验证，推荐使用 /weibo_login_scan 扫码登录。",
+                "default": ""
+            },
             "cookies": {
                 "description": "微博Cookies",
                 "type": "string",
-                "hint": "可选。支持 Netscape cookies.txt 或 k=v;... Cookie 字符串。若需要新浪 SSO 恢复，请从已登录的浏览器同时导出 weibo.com 和 login.sina.com.cn 的 Cookie（包含 .login.sina.com.cn 的 tgc 等专属字段），保留域名与路径；新浪 Cookie 仅用于浏览器 SSO，不混入微博 API。填写后保存到 cookies/weibo_cookies.txt，服务端更新也会写回；留空读取文件，否则尝试访客 Cookie。",
+                "hint": "可选。支持 Netscape cookies.txt 或 k=v;... Cookie 字符串。若需要新浪 SSO 恢复，请从已登录的浏览器同时导出 weibo.com 和 login.sina.com.cn 的 Cookie（包含 .login.sina.com.cn 的 tgc 等专属字段），保留域名与路径；新浪 Cookie 仅用于浏览器 SSO，不混入微博 API。填写后保存到 cookies/weibo_cookies.txt，自动保活与交互登录结果也会以完整 Netscape 格式写回该文件（可被 astrbot_plugin_weibo_monitor 共用）；留空读取文件，否则尝试访客 Cookie。",
                 "default": ""
             }
         }

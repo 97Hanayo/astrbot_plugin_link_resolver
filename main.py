@@ -13,7 +13,7 @@ import httpx
 
 import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, logger
-from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
 
 from .core.bilibili import BILI_MESSAGE_PATTERN, BilibiliMixin
@@ -24,6 +24,7 @@ from .core.common import (
     get_generic_cookies_file,
     get_nga_cookies_file,
     get_twitter_cookies_file,
+    get_weibo_cache,
     get_weibo_cookies_file,
     get_xhs_cookies_file,
     get_youtube_cookies_file,
@@ -61,7 +62,15 @@ from .core.nga import (
 )
 from .core.twitter import TWITTER_MESSAGE_PATTERN, TwitterExtractor
 from .core.twitter.handler import TwitterMixin
-from .core.weibo import WEIBO_MESSAGE_PATTERN, WeiboExtractor
+from .core.weibo import (
+    WEIBO_MESSAGE_PATTERN,
+    WeiboExtractor,
+    WeiboInteractiveLoginError,
+    WeiboInteractiveLoginManager,
+    WeiboLoginCancelledError,
+    WeiboLoginCaptchaBlockedError,
+    WeiboLoginTimeoutError,
+)
 from .core.weibo.handler import WeiboMixin
 from .core.weibo.cookie_storage import load_cookie_source, record_refreshed_source
 from .core.xiaohongshu import (
@@ -85,6 +94,7 @@ TASK_NAME_PREFIX = "link-resolver-parse"
 CARD_HANDLED = object()
 SUMMARY_MODE_TEXT = "文字摘要"
 SUMMARY_MODE_CARD = "渲染卡片"
+WEIBO_EXPIRE_NOTIFY_COOLDOWN_SEC = 6 * 3600
 # Xiaoheihe share cards include API, image, and app-icon URLs that are not content links.
 IGNORED_CARD_LINK_DOMAINS = (
     "xiaoheihe.cn",
@@ -123,7 +133,11 @@ class LinkResolverPlugin(
         self._active_parse_tasks: set[asyncio.Task] = set()
         self.douyin_extractor = DouyinExtractor()
         self.weibo_extractor = WeiboExtractor()
+        self.weibo_login_manager = WeiboInteractiveLoginManager()
         self._weibo_keepalive_task: asyncio.Task | None = None
+        self._weibo_login_task: asyncio.Task | None = None
+        self._weibo_cookie_expired_notified_fingerprint: str | None = None
+        self._weibo_cookie_last_notify_at: float = 0.0
         self.xhs_extractor = XiaohongshuExtractor()
         self.twitter_extractor = TwitterExtractor()
         self.font_auto_install_enabled = False
@@ -165,6 +179,17 @@ class LinkResolverPlugin(
             except asyncio.CancelledError:
                 pass
             self._weibo_keepalive_task = None
+        login_manager = getattr(self, "weibo_login_manager", None)
+        if login_manager is not None:
+            login_manager.cancel()
+        login_task = getattr(self, "_weibo_login_task", None)
+        if login_task is not None:
+            login_task.cancel()
+            try:
+                await login_task
+            except asyncio.CancelledError:
+                pass
+            self._weibo_login_task = None
 
     # region 配置
     def _get_config_value(self, key: str, default):
@@ -413,6 +438,15 @@ class LinkResolverPlugin(
                 ),
             ),
         )
+        self.weibo_cookie_notification_target = str(
+            self._get_config_value("weibo_settings.cookie_notification_target", "")
+        ).strip()
+        self.weibo_login_account = str(
+            self._get_config_value("weibo_settings.login_account", "")
+        ).strip()
+        self.weibo_login_password = str(
+            self._get_config_value("weibo_settings.login_password", "")
+        ).strip()
         weibo_cookies_str = str(
             self._get_config_value("weibo_settings.cookies", "")
         ).strip()
@@ -433,6 +467,10 @@ class LinkResolverPlugin(
             self.weibo_extractor.set_cookie_storage(
                 weibo_cookies_file,
                 self._on_weibo_cookie_updated,
+            )
+        if hasattr(self.weibo_extractor, "set_cookie_expired_callback"):
+            self.weibo_extractor.set_cookie_expired_callback(
+                self._on_weibo_cookie_expired
             )
         if hasattr(self.weibo_extractor, "configure_cookie_refresh"):
             self.weibo_extractor.configure_cookie_refresh(
@@ -948,7 +986,9 @@ class LinkResolverPlugin(
         self._set_cookie_config("nga_settings", cookie)
 
     def _on_weibo_cookie_updated(self, cookie: str) -> None:
-        """同步服务端续期后的 Cookie 到当前可变配置对象。"""
+        """同步服务端续期或交互登录后的 Cookie 到当前可变配置对象。"""
+        self._weibo_cookie_expired_notified_fingerprint = None
+        self._weibo_cookie_last_notify_at = 0.0
         try:
             record_refreshed_source(cookie, get_weibo_cookies_file())
         except OSError as exc:
@@ -960,6 +1000,164 @@ class LinkResolverPlugin(
         )
         if isinstance(settings, dict):
             settings["cookies"] = cookie
+
+    @staticmethod
+    def _parse_weibo_notification_targets(raw: str) -> list[str]:
+        targets: list[str] = []
+        for token in re.split(r"[\r\n,;]+", str(raw or "")):
+            cleaned = token.strip()
+            if cleaned and cleaned not in targets:
+                targets.append(cleaned)
+        return targets
+
+    async def _send_proactive_message(
+        self, target_umo: str, components: list[Comp.BaseMessageComponent]
+    ) -> bool:
+        send_fn = getattr(self.context, "send_message", None)
+        if not callable(send_fn):
+            logger.warning("⚠️ 当前 AstrBot 上下文不支持主动发送消息，跳过推送: %s", target_umo)
+            return False
+        try:
+            result = await send_fn(target_umo, MessageChain(components))
+            return result is not False
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("⚠️ 主动发送微博登录/提醒消息失败 (%s): %s", target_umo, exc)
+            return False
+
+    async def _on_weibo_cookie_expired(self, reason: str) -> None:
+        """当微博 Cookie 过期且无法自动保活时，向管理员会话发送提醒。"""
+        targets = self._parse_weibo_notification_targets(
+            getattr(self, "weibo_cookie_notification_target", "")
+        )
+        if not targets:
+            return
+        cookie_text = str(getattr(self.weibo_extractor, "cookie", "") or "").strip()
+        fingerprint = hashlib.sha256(cookie_text.encode("utf-8")).hexdigest()
+        now = time.monotonic()
+        if (
+            self._weibo_cookie_expired_notified_fingerprint == fingerprint
+            and now - self._weibo_cookie_last_notify_at < WEIBO_EXPIRE_NOTIFY_COOLDOWN_SEC
+        ):
+            return
+
+        message = (
+            f"⚠️ 微博 Cookie 已失效且无法自动保活：{reason}\n\n"
+            "请管理员发送以下指令重新登录（更新后将同步供 weibo_monitor 共用）：\n"
+            "• /weibo_login_scan — Playwright 扫码登录（推荐）\n"
+            "• /weibo_login_code — 账号密码/验证码登录"
+        )
+        sent_any = False
+        for target in targets:
+            if await self._send_proactive_message(target, [Comp.Plain(message)]):
+                sent_any = True
+        if sent_any:
+            self._weibo_cookie_expired_notified_fingerprint = fingerprint
+            self._weibo_cookie_last_notify_at = now
+            logger.info("📨 已向管理员发送微博 Cookie 过期提醒: targets=%d", len(targets))
+
+    @staticmethod
+    def _format_weibo_login_success(summary: dict, mode_label: str) -> str:
+        desktop_fields = ", ".join(summary.get("desktop_login_fields") or []) or "无"
+        sina_fields = ", ".join(summary.get("sina_cookie_names") or []) or "无"
+        tgc_status = "已获取" if summary.get("has_tgc") else "未包含"
+        return (
+            f"✅ 微博{mode_label}成功，已保存完整 Netscape Cookie（weibo.com + login.sina.com.cn）。\n"
+            f"• 总 Cookie 条目：{summary.get('total_cookies', 0)}\n"
+            f"• 桌面端登录字段：{desktop_fields}\n"
+            f"• 新浪 SSO 字段：{sina_fields}（tgc：{tgc_status}）\n"
+            f"• 持久化文件：{get_weibo_cookies_file()}\n"
+            "💡 若 astrbot_plugin_weibo_monitor 已开启共用本插件 Cookie，将在下一次请求时自动生效。"
+        )
+
+    async def _run_weibo_qr_login_task(self, target_umo: str) -> None:
+        try:
+            async def on_qr_ready(qr_path: Path) -> None:
+                await self._send_proactive_message(
+                    target_umo,
+                    [
+                        Comp.Plain(
+                            "📱 请使用微博 App 扫描下方二维码登录（有效时间约 3 分钟，发送 /weibo_login_cancel 可取消）："
+                        ),
+                        Comp.Image.fromFileSystem(str(qr_path.resolve())),
+                    ],
+                )
+
+            async def on_status(text: str) -> None:
+                await self._send_proactive_message(target_umo, [Comp.Plain(text)])
+
+            result = await self.weibo_login_manager.login_by_qr(
+                owner_umo=target_umo,
+                qr_dir=get_weibo_cache(),
+                on_qr_ready=on_qr_ready,
+                on_status=on_status,
+            )
+            summary = await self.weibo_extractor.apply_interactive_login_result(
+                result.cookies, result.storage_state
+            )
+            self.weibo_cookie_enabled = self.weibo_extractor.has_user_cookie()
+            await self._send_proactive_message(
+                target_umo,
+                [Comp.Plain(self._format_weibo_login_success(summary, "扫码登录"))],
+            )
+        except asyncio.CancelledError:
+            raise
+        except (WeiboLoginCancelledError, WeiboLoginTimeoutError, WeiboInteractiveLoginError) as exc:
+            await self._send_proactive_message(target_umo, [Comp.Plain(f"⚠️ {exc}")])
+        except Exception as exc:
+            logger.error("❌ 微博扫码登录异常: %s", exc)
+            await self._send_proactive_message(
+                target_umo,
+                [Comp.Plain(f"❌ 微博扫码登录失败（{type(exc).__name__}）：{exc}")],
+            )
+        finally:
+            if self._weibo_login_task is asyncio.current_task():
+                self._weibo_login_task = None
+
+    async def _run_weibo_code_login_task(self, target_umo: str) -> None:
+        try:
+            async def on_code_requested(prompt: str) -> None:
+                await self._send_proactive_message(
+                    target_umo, [Comp.Plain(f"🔐 {prompt}")]
+                )
+
+            async def on_status(text: str) -> None:
+                await self._send_proactive_message(target_umo, [Comp.Plain(text)])
+
+            result = await self.weibo_login_manager.login_by_code(
+                account=self.weibo_login_account,
+                password=self.weibo_login_password,
+                owner_umo=target_umo,
+                on_code_requested=on_code_requested,
+                on_status=on_status,
+            )
+            summary = await self.weibo_extractor.apply_interactive_login_result(
+                result.cookies, result.storage_state
+            )
+            self.weibo_cookie_enabled = self.weibo_extractor.has_user_cookie()
+            await self._send_proactive_message(
+                target_umo,
+                [Comp.Plain(self._format_weibo_login_success(summary, "验证码登录"))],
+            )
+        except asyncio.CancelledError:
+            raise
+        except (
+            WeiboLoginCaptchaBlockedError,
+            WeiboLoginCancelledError,
+            WeiboLoginTimeoutError,
+            WeiboInteractiveLoginError,
+        ) as exc:
+            await self._send_proactive_message(target_umo, [Comp.Plain(f"⚠️ {exc}")])
+        except Exception as exc:
+            logger.error("❌ 微博验证码登录异常: %s", exc)
+            await self._send_proactive_message(
+                target_umo,
+                [Comp.Plain(f"❌ 微博验证码登录失败（{type(exc).__name__}）：{exc}")],
+            )
+        finally:
+            if self._weibo_login_task is asyncio.current_task():
+                self._weibo_login_task = None
 
     # endregion
 
@@ -1657,6 +1855,116 @@ class LinkResolverPlugin(
             self.video_relay_umo,
         )
         return references
+
+    # endregion
+
+    # region 微博交互登录命令
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("weibo_login_scan")
+    async def cmd_weibo_login_scan(self, event: AstrMessageEvent):
+        """管理员触发 Playwright 微博扫码登录。"""
+        self._refresh_config()
+        if self.weibo_login_manager.is_active() or (
+            self._weibo_login_task is not None and not self._weibo_login_task.done()
+        ):
+            yield event.plain_result(
+                "⚠️ 当前已有进行中的微博登录任务，请先完成或发送 /weibo_login_cancel 取消。"
+            )
+            return
+        if await self.weibo_extractor.is_user_cookie_valid():
+            yield event.plain_result("✅ 当前微博 Cookie 仍有效，无需重新登录。")
+            return
+
+        target_umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        if not target_umo:
+            yield event.plain_result("❌ 无法获取当前会话 UMO，无法启动扫码登录。")
+            return
+
+        self._weibo_login_task = asyncio.create_task(
+            self._run_weibo_qr_login_task(target_umo),
+            name="link-resolver-weibo-qr-login",
+        )
+        yield event.plain_result("🔄 正在启动 Playwright 获取微博登录二维码，请稍候...")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("weibo_login_code")
+    async def cmd_weibo_login_code(self, event: AstrMessageEvent):
+        """管理员触发 Playwright 微博账号密码/验证码登录。"""
+        self._refresh_config()
+        if self.weibo_login_manager.is_active() or (
+            self._weibo_login_task is not None and not self._weibo_login_task.done()
+        ):
+            yield event.plain_result(
+                "⚠️ 当前已有进行中的微博登录任务，请先完成或发送 /weibo_login_cancel 取消。"
+            )
+            return
+        if await self.weibo_extractor.is_user_cookie_valid():
+            yield event.plain_result("✅ 当前微博 Cookie 仍有效，无需重新登录。")
+            return
+        if not self.weibo_login_account:
+            yield event.plain_result(
+                "⚠️ 尚未配置微博登录账号，请先在插件后台 weibo_settings.login_account"
+                "（及可选 login_password）中配置后再执行 /weibo_login_code，或改用 /weibo_login_scan 扫码登录。"
+            )
+            return
+
+        target_umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        if not target_umo:
+            yield event.plain_result("❌ 无法获取当前会话 UMO，无法启动验证码登录。")
+            return
+
+        self._weibo_login_task = asyncio.create_task(
+            self._run_weibo_code_login_task(target_umo),
+            name="link-resolver-weibo-code-login",
+        )
+        yield event.plain_result("🔄 正在启动 Playwright 执行微博账号/验证码登录，请稍候...")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("weibo_code")
+    async def cmd_weibo_code(self, event: AstrMessageEvent, code: str = ""):
+        """向等待中的微博验证码登录会话提交验证码。"""
+        raw = str(code or "").strip()
+        if not raw:
+            msg = str(getattr(event, "message_str", "") or "").strip()
+            parts = msg.split(None, 1)
+            raw = parts[1].strip() if len(parts) > 1 else ""
+        if not raw:
+            yield event.plain_result("⚠️ 请提供验证码，例如：/weibo_code 123456")
+            return
+        if not self.weibo_login_manager.is_awaiting_code():
+            yield event.plain_result("⚠️ 当前没有等待输入验证码的微博登录任务。")
+            return
+        if self.weibo_login_manager.submit_code(raw):
+            yield event.plain_result("✅ 已收到验证码，正在提交微博登录...")
+        else:
+            yield event.plain_result("⚠️ 提交验证码失败，请确认登录会话是否仍在等待。")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("weibo_login_cancel")
+    async def cmd_weibo_login_cancel(self, event: AstrMessageEvent):
+        """取消当前正在进行的微博交互登录任务。"""
+        cancelled = self.weibo_login_manager.cancel()
+        if self._weibo_login_task is not None and not self._weibo_login_task.done():
+            self._weibo_login_task.cancel()
+            cancelled = True
+        if cancelled:
+            yield event.plain_result("🛑 已取消当前微博登录任务。")
+        else:
+            yield event.plain_result("ℹ️ 当前没有正在进行的微博登录任务。")
+
+    @filter.regex(r"^\s*\d{4,8}\s*$", priority=20)
+    async def handle_weibo_verification_code(self, event: AstrMessageEvent):
+        """在等待管理员回复验证码期间，直接捕获同一会话发送的纯数字验证码。"""
+        if self._is_self_message(event):
+            return
+        target_umo = str(getattr(event, "unified_msg_origin", "") or "").strip()
+        if not target_umo or not self.weibo_login_manager.is_awaiting_code(target_umo):
+            return
+        code = str(getattr(event, "message_str", "") or "").strip()
+        if self.weibo_login_manager.submit_code(code, umo=target_umo):
+            if hasattr(event, "stop_event"):
+                event.stop_event()
+            yield event.plain_result("✅ 已收到验证码，正在提交微博登录...")
 
     # endregion
 

@@ -161,7 +161,7 @@ def serialize_netscape_cookies(cookies: Iterable[Mapping[str, object]]) -> str:
         secure = "TRUE" if cookie.get("secure") else "FALSE"
         expires = cookie.get("expires")
         try:
-            expires_text = str(int(float(expires))) if expires else "0"
+            expires_text = str(max(0, int(float(expires)))) if expires else "0"
         except (TypeError, ValueError, OverflowError):
             expires_text = "0"
         lines.append(
