@@ -30,6 +30,7 @@ from .core.common import (
 )
 from .core.common.qq_video_relay import (
     RelayVideoReferenceNode,
+    send_components_to_private_relay,
     send_videos_to_private_relay,
 )
 from .core.common.card_renderer import find_default_font, find_emoji_font
@@ -1620,6 +1621,37 @@ class LinkResolverPlugin(
 
         logger.debug(
             "📨 视频已上传到 QQ 私聊中转%s: 数量=%d, UMO=%s",
+            source_tag,
+            len(references),
+            self.video_relay_umo,
+        )
+        return references
+
+    async def _relay_component_reference_nodes(
+        self,
+        event: AstrMessageEvent,
+        components: list[Comp.BaseMessageComponent],
+        source_tag: str = "",
+    ) -> list[RelayVideoReferenceNode] | None:
+        """Upload components in order to the configured QQ private session and return forward refs."""
+
+        if not self.video_relay_umo or not components:
+            return None
+
+        try:
+            references = await send_components_to_private_relay(
+                event, self.video_relay_umo, components
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "⚠️ 内容中转失败%s，回退为逐条发送: %s", source_tag, str(exc)
+            )
+            return None
+
+        logger.debug(
+            "📨 内容已上传到 QQ 私聊中转%s: 数量=%d, UMO=%s",
             source_tag,
             len(references),
             self.video_relay_umo,

@@ -143,7 +143,7 @@ Live 动态上限独立于 `max_media` 图片上限。GIF 随图片合并转发�
 | `xhs_settings.enable_live_photo` | 额外发送图文笔记中的 Live 图动态 | ❌ 关闭 |
 | `xhs_settings.live_photo_video_limit` | 每篇笔记最多发送的 Live 动态数，`0` 表示不限制 | 1 |
 | `xhs_settings.live_photo_format` | Live 图动态格式：`视频` 或 `GIF` | `视频` |
-| `xhs_settings.auto_unmerge_threshold_mb` | 图片总大小超过此值时停止合并转发 (MB) | 50 |
+| `xhs_settings.auto_unmerge_threshold_mb` | 媒体总大小超过此值时触发中转合并（配置了中转 UMO 时）或逐条发送 (MB) | 50 |
 | `xhs_settings.qq_image_size_limit_mb` | 单张图片超过此值时转为文件发送 (MB) | 30 |
 | `xhs_settings.enable_comment_screenshot` | 开启评论截图，插入在摘要后、媒体前 | ❌ 关闭 |
 | `xhs_settings.comment_screenshot_max` | 最多截图评论条数，`0` 表示不限制 | 20 |

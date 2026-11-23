@@ -490,9 +490,9 @@
                 "default": true
             },
             "auto_unmerge_threshold_mb": {
-                "description": "小红书自动解合阈值(MB)",
+                "description": "小红书自动解合/中转阈值(MB)",
                 "type": "int",
-                "hint": "当下载的图片总大小超过此值时，改为逐条发送，防止客户端崩溃。设为0禁用。",
+                "hint": "当下载的媒体总大小超过此值时，若已配置通用视频中转 UMO，则先逐条发到中转账号再合并转发（每条最多20个节点）；未配置或中转失败时改为逐条发送，防止客户端崩溃。设为0禁用。",
                 "default": 50
             },
             "qq_image_size_limit_mb": {

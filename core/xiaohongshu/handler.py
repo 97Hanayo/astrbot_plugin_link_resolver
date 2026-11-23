@@ -23,6 +23,10 @@ from ..common import (
 )
 from ..common.file_lifecycle import save_image_file
 from ..common.image_compression import fit_image_file_limits
+from ..common.qq_video_relay import (
+    RelayVideoReferenceNode,
+    send_components_to_private_relay,
+)
 from . import (
     XHS_HEADERS,
     XiaohongshuParseError,
@@ -42,7 +46,7 @@ XHS_ORIGINAL_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 XHS_VIDEO_DOWNLOAD_CHUNK_BYTES = 4 * 1024 * 1024
 XHS_VIDEO_DOWNLOAD_WORKERS = 8
 XHS_VIDEO_RANGE_RETRIES = 3
-XHS_MERGE_FORWARD_MAX_NODES = 10
+XHS_MERGE_FORWARD_MAX_NODES = 20
 XHS_MERGE_FORWARD_CHUNK_DELAY_SEC = 1.0
 # endregion
 
@@ -967,6 +971,42 @@ class XiaohongshuMixin:
             logger.warning("⚠️ 小红书评论截图失败，已跳过: %s", str(exc))
             return []
 
+    async def _relay_xhs_components(
+        self,
+        event: AstrMessageEvent,
+        components: list[object],
+        source_tag: str = "",
+    ) -> list[RelayVideoReferenceNode] | None:
+        relay_fn = getattr(self, "_relay_component_reference_nodes", None)
+        if callable(relay_fn):
+            return await relay_fn(event, components, source_tag)
+
+        relay_umo = str(getattr(self, "video_relay_umo", "") or "").strip()
+        if not relay_umo or not components:
+            return None
+
+        try:
+            references = await send_components_to_private_relay(
+                event, relay_umo, components
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "⚠️ 小红书内容中转失败%s，回退为逐条发送: %s",
+                source_tag,
+                str(exc),
+            )
+            return None
+
+        logger.debug(
+            "📨 小红书内容已上传到 QQ 私聊中转%s: 数量=%d, UMO=%s",
+            source_tag,
+            len(references),
+            relay_umo,
+        )
+        return references
+
     # endregion
 
     # region 小红书处理
@@ -1204,7 +1244,7 @@ class XiaohongshuMixin:
                     *[_download_one(i, url) for i, url in enumerate(image_urls)]
                 )
                 # 按原始顺序组装结果
-                for i, path, exc in dl_results:
+                for i, path, exc in sorted(dl_results, key=lambda item: item[0]):
                     if path is not None:
                         image_paths.append(path)
                         image_paths_by_index[i] = path
@@ -1458,21 +1498,45 @@ class XiaohongshuMixin:
 
         # 判断是否触发解合阈值
         threshold = getattr(self, "xhs_auto_unmerge_threshold_mb", 20)
+        exceed_threshold = threshold > 0 and total_size_mb > threshold
         force_unmerge = False
-        if threshold > 0 and total_size_mb > threshold:
-            logger.info(
-                "XHS 媒体总大小 (%.2fMB) 超过阈值 (%dMB)，强制逐条发送",
-                total_size_mb,
-                threshold,
-            )
-            force_unmerge = True
+        relay_merge_nodes = None
 
         # 判断是否为图文笔记（有图片路径）
         is_image_post = bool(image_paths)
+
+        if exceed_threshold:
+            if getattr(self, "video_relay_umo", "") and (
+                is_image_post
+                or self.xhs_merge_send
+                or bool(standalone_video_components)
+            ):
+                relay_components: list[object] = []
+                if summary_text:
+                    relay_components.append(Plain(summary_text))
+                relay_components.extend(chat_record_components)
+                relay_components.extend(standalone_video_components)
+                logger.info(
+                    "🍠 XHS 媒体总大小 (%.2fMB) 超过阈值 (%dMB)，发送至中转账号后合并转发: 条目=%d",
+                    total_size_mb,
+                    threshold,
+                    len(relay_components),
+                )
+                relay_merge_nodes = await XiaohongshuMixin._relay_xhs_components(
+                    self, event, relay_components, source_tag
+                )
+            if relay_merge_nodes is None:
+                logger.info(
+                    "XHS 媒体总大小 (%.2fMB) 超过阈值 (%dMB)，强制逐条发送",
+                    total_size_mb,
+                    threshold,
+                )
+                force_unmerge = True
+
         # 图文笔记始终合并转发；视频笔记根据配置决定
-        # force_unmerge 仅对图文笔记生效（逐条发送图片）
+        # force_unmerge 仅在未配置中转或中转失败时对图文笔记生效（逐条发送图片）
         if is_image_post:
-            # 图文笔记：始终合并转发（除非触发解合阈值）
+            # 图文笔记：始终合并转发（除非触发解合阈值且无法中转合并）
             should_merge = not force_unmerge
         else:
             # 视频笔记：根据配置决定
@@ -1480,28 +1544,36 @@ class XiaohongshuMixin:
 
         relay_video_nodes = None
         if (
-            standalone_video_components
+            relay_merge_nodes is None
+            and standalone_video_components
             and not (force_unmerge and is_image_post)
             and getattr(self, "video_relay_umo", "")
         ):
             relay_video_nodes = await self._relay_video_reference_nodes(
                 event, standalone_video_components, source_tag
             )
-        relay_video_ready = relay_video_nodes is not None
+        relay_video_ready = (
+            relay_merge_nodes is not None or relay_video_nodes is not None
+        )
         should_merge = should_merge or relay_video_ready
 
         if should_merge:
-            merge_nodes = []
-            sender_uin = self._get_merge_sender_uin(event)
-            if summary_text:
-                merge_nodes.append(Node(uin=sender_uin, content=[Plain(summary_text)]))
-            for component in chat_record_components:
-                merge_component = await self._prepare_component_for_merge_send(
-                    component
-                )
-                merge_nodes.append(Node(uin=sender_uin, content=[merge_component]))
-            if relay_video_nodes:
-                merge_nodes.extend(relay_video_nodes)
+            if relay_merge_nodes is not None:
+                merge_nodes = list(relay_merge_nodes)
+            else:
+                merge_nodes = []
+                sender_uin = self._get_merge_sender_uin(event)
+                if summary_text:
+                    merge_nodes.append(
+                        Node(uin=sender_uin, content=[Plain(summary_text)])
+                    )
+                for component in chat_record_components:
+                    merge_component = await self._prepare_component_for_merge_send(
+                        component
+                    )
+                    merge_nodes.append(Node(uin=sender_uin, content=[merge_component]))
+                if relay_video_nodes:
+                    merge_nodes.extend(relay_video_nodes)
             if len(merge_nodes) > XHS_MERGE_FORWARD_MAX_NODES:
                 logger.info(
                     "🍠 小红书合并转发共 %d 个节点，将拆分为每条最多 %d 个节点发送",

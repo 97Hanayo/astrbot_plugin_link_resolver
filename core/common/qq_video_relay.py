@@ -1,10 +1,17 @@
-"""Upload videos to a QQ private relay and reference their sent message IDs."""
+"""Upload media or messages to a QQ private relay and reference their sent message IDs."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
-from astrbot.api.message_components import Node, Video
+from astrbot.api.message_components import (
+    BaseMessageComponent,
+    File,
+    Image,
+    Node,
+    Video,
+)
 
 
 class RelayVideoReferenceNode(Node):
@@ -51,19 +58,62 @@ def _extract_message_id(result: object) -> int:
         raise ValueError("QQ 私聊发送接口返回了无效的 message_id") from exc
 
 
-async def send_videos_to_private_relay(
+async def _component_to_relay_payload(
+    event,
+    component: BaseMessageComponent,
+) -> dict:
+    from_segment = getattr(event, "_from_segment_to_dict", None)
+    if callable(from_segment):
+        return await from_segment(component)
+
+    if isinstance(component, Image):
+        file_ref = str(getattr(component, "file", "") or "").strip()
+        if file_ref.startswith(("http://", "https://", "base64://")):
+            return {"type": "image", "data": {"file": file_ref}}
+        if hasattr(component, "convert_to_base64"):
+            try:
+                bs64 = await component.convert_to_base64()
+                if bs64:
+                    return {"type": "image", "data": {"file": f"base64://{bs64}"}}
+            except Exception:
+                pass
+        if hasattr(component, "register_to_file_service"):
+            try:
+                callback_url = await component.register_to_file_service()
+                if callback_url:
+                    return {"type": "image", "data": {"file": callback_url}}
+            except Exception:
+                pass
+        return {
+            "type": "image",
+            "data": {"file": file_ref or str(getattr(component, "path", "") or "")},
+        }
+
+    if isinstance(component, File):
+        payload = await component.to_dict()
+        file_val = str(payload.get("data", {}).get("file", "") or "")
+        if file_val and "://" not in file_val:
+            try:
+                path_obj = Path(file_val)
+                if path_obj.is_absolute():
+                    payload["data"]["file"] = path_obj.as_uri()
+            except Exception:
+                pass
+        return payload
+
+    if hasattr(component, "to_dict"):
+        return await component.to_dict()
+    return component.toDict()
+
+
+async def send_components_to_private_relay(
     event,
     relay_umo: str,
-    videos: Sequence[Video],
+    components: Sequence[BaseMessageComponent],
 ) -> list[RelayVideoReferenceNode]:
-    """Send videos to the configured QQ private chat and return ID reference nodes.
+    """Send components sequentially to the configured QQ private chat and return ID reference nodes."""
 
-    Calling the adapter action directly preserves its response message ID. Each
-    returned ID is tied to the exact video sent by this invocation, so concurrent
-    parse tasks do not need to infer which message was sent most recently.
-    """
-
-    if not videos:
+    if not components:
         return []
 
     platform_id, relay_user_id = _parse_private_umo(relay_umo)
@@ -83,8 +133,8 @@ async def send_videos_to_private_relay(
         routing["self_id"] = str(self_id)
 
     references: list[RelayVideoReferenceNode] = []
-    for video in videos:
-        payload = await video.to_dict()
+    for component in components:
+        payload = await _component_to_relay_payload(event, component)
         result = await call_action(
             "send_private_msg",
             user_id=relay_user_id,
@@ -96,3 +146,18 @@ async def send_videos_to_private_relay(
         )
 
     return references
+
+
+async def send_videos_to_private_relay(
+    event,
+    relay_umo: str,
+    videos: Sequence[Video],
+) -> list[RelayVideoReferenceNode]:
+    """Send videos to the configured QQ private chat and return ID reference nodes.
+
+    Calling the adapter action directly preserves its response message ID. Each
+    returned ID is tied to the exact video sent by this invocation, so concurrent
+    parse tasks do not need to infer which message was sent most recently.
+    """
+
+    return await send_components_to_private_relay(event, relay_umo, videos)
